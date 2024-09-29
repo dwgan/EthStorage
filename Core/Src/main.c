@@ -50,16 +50,18 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 //#define DATA_SIZE 524288000 //500*1024*1024
+#define SD_CAPACITY 100 // 单位 MBytes
 #define BLOCK_SIZE         512 // 一个块的字节数
 #define DATA_SIZE_TO_WRITE 1*1024*1024 // 1MB = 1*1024*1024字节
 #define DMA_NUM_BLOCKS_TO_WRITE 8 // 每一次DMA写入块的数量
 #define DMA_NUM_BLOCKS_TO_READ  1 // 每一次DMA读出块的数量
 #define NUM_TIMES_TO_WRITE DATA_SIZE_TO_WRITE/ (BLOCK_SIZE *DMA_NUM_BLOCKS_TO_WRITE) // 总共要写入的次数
 #define NUM_TIMES_TO_READ  DATA_SIZE_TO_WRITE/ (BLOCK_SIZE *DMA_NUM_BLOCKS_TO_READ) // 总共要写入的次数
-
-#define BUFFER_SIZE         16384         // 缓冲区大小
+#define SD_CARD_CAPACITY_IN_BLOCKS SD_CAPACITY*1024*1024/BLOCK_SIZE
+#define BUFFER_SIZE         8192         // 缓冲区大小
 
 #define LAN8720_PHY_ADDRESS  0x00  // 根据你的硬件设计设置正确的PHY地址
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -70,10 +72,18 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-//uint8_t buffer1[BUFFER_SIZE];
-//uint8_t buffer2[BUFFER_SIZE];
-//uint8_t *active_buffer;  // 当前活跃缓冲区
-//uint8_t *processing_buffer;  // 正在处理的缓冲区
+
+uint8_t buffer1[BUFFER_SIZE];
+uint8_t buffer2[BUFFER_SIZE];
+
+volatile uint8_t *current_buffer = buffer1;    // 当前用于接收的缓冲区
+volatile uint8_t *write_buffer = NULL;         // 当前用于写入SD卡的缓冲区
+
+volatile uint32_t buffer_index = 0;            // 当前缓冲区的写入索引
+volatile uint8_t buffer_full = 0;              // 标志当前缓冲区是否已满
+
+volatile uint8_t sd_write_in_progress = 0;     // 标志是否正在进行SD卡写入
+
 
 __ALIGN_BEGIN uint8_t buffer_TX[BUFFER_SIZE] __ALIGN_END;  // 4字节对齐，发送缓冲区
 __ALIGN_BEGIN uint8_t buffer_RX[BLOCK_SIZE*DMA_NUM_BLOCKS_TO_READ] __ALIGN_END;  // 4字节对齐，接收缓冲区
@@ -96,6 +106,8 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err);
 static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
 static void tcp_server_error(void *arg, err_t err);
 static void tcp_server_close(struct tcp_pcb *tpcb);
+static err_t tcp_server_send_data(struct tcp_pcb *tpcb);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -111,6 +123,7 @@ int fputc(int ch, FILE *f) {
 void HAL_SD_WriteCpltCallback(SD_HandleTypeDef *hsd)
 {
     sd_write_complete = 1;
+//    sd_write_in_progress = 0;
 }
 
 void HAL_SD_ErrorCallback(SD_HandleTypeDef *hsd)
@@ -314,6 +327,52 @@ void sdio_read_compare()
     
     printf("数据读取和验证完成，写入和读取的数据一致！\n");
 }
+
+void write_data_to_sd_card()
+{
+    static uint32_t BlockAdd = 0;  // SD卡的起始块地址
+    HAL_StatusTypeDef status;
+
+    if (sd_write_in_progress && write_buffer != NULL)
+    {
+        uint32_t data_length = BUFFER_SIZE;  // 假设缓冲区已满
+        uint8_t retry = 0;
+
+        // 计算需要写入的块数
+        uint32_t blocks_to_write = data_length / BLOCK_SIZE;
+
+        // 写入SD卡
+        do
+        {
+            status = HAL_SD_WriteBlocks_DMA(&hsd, (uint8_t *)write_buffer, BlockAdd, blocks_to_write);
+            if (status == HAL_OK)
+            {
+                // 等待写入完成
+                while (HAL_SD_GetCardState(&hsd) != HAL_SD_CARD_TRANSFER) {}
+                BlockAdd += blocks_to_write;  // 更新块地址
+                break;
+            }
+            else
+            {
+                printf("写入块 %lu 失败，状态：%d。重试 %d/%d\r\n",
+                       BlockAdd, HAL_SD_GetError(&hsd), retry + 1, MAX_RETRIES);
+                retry++;
+                HAL_Delay(RETRY_DELAY_MS);
+            }
+        } while (retry < 1);
+
+        if (status != HAL_OK)
+        {
+            printf("写入块 %lu 失败，达到最大重试次数，跳过此块。\n", BlockAdd);
+            BlockAdd += blocks_to_write;  // 跳过有问题的块
+        }
+
+        // 写入完成，重置标志位
+        sd_write_in_progress = 0;
+        write_buffer = NULL;
+    }
+}
+
 /**************************以上是SD卡相关*********************************/
 
 /**************************以下是以太网相关***********************************/
@@ -364,7 +423,6 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 
     return ERR_OK;
 }
-
 /* 当接收到数据时被调用 */
 static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 {
@@ -372,26 +430,197 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
     {
         /* 连接已关闭，关闭 TCP 连接 */
         tcp_server_close(tpcb);
-//        printf("客户端已断开连接\r\n");
+        // printf("客户端已断开连接\r\n");
         return ERR_OK;
     }
     else
     {
-        /* 处理接收到的数据 */
-        tcp_recved(tpcb, p->tot_len);  // 更新接收窗口
+        /* 更新接收窗口 */
+        tcp_recved(tpcb, p->tot_len);
 
-        /* 将数据通过串口发送 */
-//        HAL_UART_Transmit(&huart1, p->payload, p->len, HAL_MAX_DELAY);
+        /* 定义一个静态缓冲区用于命令解析 */
+        #define CMD_BUFFER_SIZE 64
+        static char cmd_buffer[CMD_BUFFER_SIZE];
+        static uint16_t cmd_buffer_index = 0;
 
-//        /* 可选：在串口打印接收到的数据 */
-//        printf("接收到数据：%.*s\r\n", p->len, (char *)p->payload);
-        
+        struct pbuf *q = p;
+        while (q != NULL)
+        {
+            uint16_t len = q->len;
+            uint8_t *payload = (uint8_t *)q->payload;
+
+            for (uint16_t i = 0; i < len; i++)
+            {
+                if (cmd_buffer_index < CMD_BUFFER_SIZE - 1)
+                {
+                    cmd_buffer[cmd_buffer_index++] = payload[i];
+
+                    /* 检查是否接收到换行符，表示一条命令的结束 */
+                    if (*(char*)(payload +i)== '\n')
+                    {
+                        cmd_buffer[cmd_buffer_index] = '\0';  // 确保字符串以空字符结尾
+
+                        /* 处理命令 */
+                        if (strncmp(cmd_buffer, "READ_SD", 7) == 0)
+                        {
+                            // 调用函数发送 SD 卡数据
+                            printf("tcp_server_send_data\r\n");
+                            tcp_server_send_data(tpcb);
+                            
+                            // 清空命令缓冲区
+                            cmd_buffer_index = 0;
+                            
+                            // 释放接收到的 pbuf
+                            pbuf_free(p);
+                            
+                            return ERR_OK;
+                        }
+                        else
+                        {
+                            // 处理其他命令或忽略
+                        }
+
+                        // 清空命令缓冲区
+                        cmd_buffer_index = 0;
+                    }
+                }
+                else
+                {
+                    // 缓冲区溢出，重置缓冲区
+                    cmd_buffer_index = 0;
+                }
+            }
+
+            /* 如果不是命令，执行原有的数据处理逻辑 */
+            // 检查缓冲区是否有足够空间
+            if (buffer_index + len <= BUFFER_SIZE)
+            {
+                memcpy((void *)(current_buffer + buffer_index), payload, len);
+                buffer_index += len;
+            }
+            else
+            {
+                // 当前缓冲区已满，准备切换缓冲区
+
+                // 等待 SD 卡写入完成
+                // while (sd_write_in_progress);
+
+                // 切换缓冲区
+                __disable_irq();
+                sd_write_in_progress = 1;
+                if (current_buffer == buffer1)
+                {
+                    current_buffer = buffer2;
+                    write_buffer = buffer1;
+                }
+                else
+                {
+                    current_buffer = buffer1;
+                    write_buffer = buffer2;
+                }
+
+                buffer_index = 0;
+                __enable_irq();
+
+                // 将剩余的数据写入新的缓冲区
+                memcpy((void *)(current_buffer + buffer_index), payload, len);
+                buffer_index += len;
+            }
+
+            q = q->next;
+        }
 
         /* 释放接收到的 pbuf */
         pbuf_free(p);
 
         return ERR_OK;
     }
+}
+
+#define SD_READ_BUFFER_SIZE  (DMA_NUM_BLOCKS_TO_READ * BLOCK_SIZE)  // 每次读取和发送的字节数
+static err_t tcp_server_send_data(struct tcp_pcb *tpcb)
+{
+    uint32_t total_blocks = SD_CARD_CAPACITY_IN_BLOCKS;  // SD 卡的总块数
+    uint32_t block = 0;
+    uint8_t buffer_RX[DMA_NUM_BLOCKS_TO_READ * BLOCK_SIZE];
+    err_t err;
+    uint16_t mss = tcp_mss(tpcb);  // 获取当前TCP连接的MSS
+    printf("当前MSS为: %u字节\n", mss);
+
+    while (block < total_blocks)
+    {
+        // 计算本次读取的块数，防止超出总块数
+        uint32_t blocks_to_read = DMA_NUM_BLOCKS_TO_READ;
+        if ((block + blocks_to_read) > total_blocks)
+        {
+            blocks_to_read = total_blocks - block;
+        }
+
+        // 启动 DMA 读取数据到 buffer_RX
+        if (HAL_SD_ReadBlocks_DMA(&hsd, (uint8_t*)buffer_RX, block, blocks_to_read) == HAL_OK)
+        {
+            // 等待读取完成
+            while (HAL_SD_GetCardState(&hsd) != HAL_SD_CARD_TRANSFER);
+
+            // 计算读取的字节数
+            uint32_t bytes_read = blocks_to_read * BLOCK_SIZE;
+
+            // 分块发送数据
+            uint32_t bytes_sent = 0;
+            while (bytes_sent < bytes_read)
+            {
+                // 获取当前 TCP 发送缓冲区的大小
+                uint16_t max_len = tcp_sndbuf(tpcb);
+
+                // 计算本次可以发送的最大字节数，确保不会超过 TCP 发送缓冲区和 MSS
+                uint16_t len = bytes_read - bytes_sent;
+                if (len > max_len) {
+                    len = max_len;  // 确保不会超过可用缓冲区大小
+                }
+                if (len > mss) {
+                    len = mss;  // 确保不会超过 MSS
+                }
+
+                // 发送数据
+                err = tcp_write(tpcb, buffer_RX + bytes_sent, len, TCP_WRITE_FLAG_COPY);
+                if (err != ERR_OK)
+                {
+                    printf("TCP 写入错误，错误代码：%d\n", err);
+                    return err;
+                }
+
+                // 将数据推送到网络，确保发送缓冲区被释放
+                err = tcp_output(tpcb);
+                if (err != ERR_OK)
+                {
+                    printf("TCP 输出错误，错误代码：%d\n", err);
+                    return err;
+                }
+
+                bytes_sent += len;
+            }
+
+            block += blocks_to_read;  // 更新块号
+
+            // 打印进度（可选）
+            if (block % 10000 == 0)
+            {
+                printf("已发送 %lu MB...\n", (block * BLOCK_SIZE) / (1024 * 1024));
+            }
+        }
+        else
+        {
+            printf("读取块 %lu 失败，状态：%d\n", block, HAL_SD_GetError(&hsd));
+            return ERR_VAL;  // 读取错误，返回错误码
+        }
+    }
+
+    // 数据发送完成，关闭 TCP 连接（根据需要）
+    // tcp_server_close(tpcb);
+
+    printf("SD 卡数据发送完成\n");
+
+    return ERR_OK;
 }
 
 /* 当连接发生错误时被调用 */
@@ -425,35 +654,35 @@ static void tcp_server_close(struct tcp_pcb *tpcb)
   */
 int main(void)
 {
+
+  /* USER CODE BEGIN 1 */
     
-    /* USER CODE BEGIN 1 */
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
     
-    /* USER CODE END 1 */
-    
-    /* MCU Configuration--------------------------------------------------------*/
-    
-    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-    HAL_Init();
-    
-    /* USER CODE BEGIN Init */
-    
-    /* USER CODE END Init */
-    
-    /* Configure the system clock */
-    SystemClock_Config();
-    
-    /* USER CODE BEGIN SysInit */
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
     HAL_Delay(100);
     
-    /* USER CODE END SysInit */
-    
-    /* Initialize all configured peripherals */
-    MX_GPIO_Init();
-    MX_DMA_Init();
-    MX_SDIO_SD_Init();
-    MX_USART1_UART_Init();
-    MX_LWIP_Init();
-    /* USER CODE BEGIN 2 */
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_DMA_Init();
+  MX_SDIO_SD_Init();
+  MX_USART1_UART_Init();
+  MX_LWIP_Init();
+  /* USER CODE BEGIN 2 */
     HAL_Delay(100);
     
     
@@ -476,6 +705,10 @@ int main(void)
     uint32_t sdio_clk = pll_vco_freq / oscinitstruct.PLL.PLLQ;
     printf("SDIO Clock Frequency: %d Hz\n", sdio_clk / (hsd.Init.ClockDiv + 2));
     
+    struct tcp_pcb *tpcb;
+    uint16_t mss = tcp_mss(tpcb);
+    printf("LWIP初始化，当前MSS为: %u字节\n", mss);
+
     // 确保 SD 卡已初始化成功
     if (HAL_SD_GetCardState(&hsd) != HAL_SD_CARD_TRANSFER) {
         printf("SD 卡未准备好，进入死循环。\n");
@@ -492,18 +725,19 @@ int main(void)
     sdio_read_speed_test();
     sdio_read_compare();
     
-    /* USER CODE END 2 */
-    
-    /* Infinite loop */
-    /* USER CODE BEGIN WHILE */
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
     while (1)
     {
         MX_LWIP_Process();
-        /* USER CODE END WHILE */
-        
-        /* USER CODE BEGIN 3 */
+        write_data_to_sd_card();
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
     }
-    /* USER CODE END 3 */
+  /* USER CODE END 3 */
 }
 
 /**
