@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "dma.h"
+#include "lwip.h"
 #include "sdio.h"
 #include "usart.h"
 #include "gpio.h"
@@ -32,6 +33,13 @@
 //#include "dma.h"
 
 #include <stdio.h>
+#include "lwip/init.h"
+#include "lwip/netif.h"
+#include "netif/ethernet.h"
+#include "ethernetif.h"
+#include "lwip/timeouts.h"
+
+#include "lwip/tcp.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,7 +51,7 @@
 /* USER CODE BEGIN PD */
 //#define DATA_SIZE 524288000 //500*1024*1024
 #define BLOCK_SIZE         512 // 一个块的字节数
-#define DATA_SIZE_TO_WRITE 10*1024*1024 // 1MB = 1*1024*1024字节
+#define DATA_SIZE_TO_WRITE 1*1024*1024 // 1MB = 1*1024*1024字节
 #define DMA_NUM_BLOCKS_TO_WRITE 8 // 每一次DMA写入块的数量
 #define DMA_NUM_BLOCKS_TO_READ  1 // 每一次DMA读出块的数量
 #define NUM_TIMES_TO_WRITE DATA_SIZE_TO_WRITE/ (BLOCK_SIZE *DMA_NUM_BLOCKS_TO_WRITE) // 总共要写入的次数
@@ -51,6 +59,7 @@
 
 #define BUFFER_SIZE         16384         // 缓冲区大小
 
+#define LAN8720_PHY_ADDRESS  0x00  // 根据你的硬件设计设置正确的PHY地址
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -72,12 +81,21 @@ __ALIGN_BEGIN uint8_t buffer_RX[BLOCK_SIZE*DMA_NUM_BLOCKS_TO_READ] __ALIGN_END; 
 volatile uint8_t sd_write_complete = 0; // 写入完成标志
 volatile uint8_t sd_read_complete = 0;  // 读取完成标志
 
+extern struct netif gnetif;
+extern ETH_HandleTypeDef heth;
+
+// 定义全局 TCP 控制块变量
+static struct tcp_pcb *tcp_server_pcb;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
+static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err);
+static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
+static void tcp_server_error(void *arg, err_t err);
+static void tcp_server_close(struct tcp_pcb *tpcb);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -88,6 +106,7 @@ int fputc(int ch, FILE *f) {
     return ch;
 }
 
+/**************************以下是SD卡相关*********************************/
 /* DMA回调函数 */
 void HAL_SD_WriteCpltCallback(SD_HandleTypeDef *hsd)
 {
@@ -150,80 +169,15 @@ void process_data(uint8_t* buffer, uint32_t block) {
     }
 }
 
-/* USER CODE END 0 */
-
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
-int main(void)
-{
-
-  /* USER CODE BEGIN 1 */
-    
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
-
-  /* USER CODE BEGIN Init */
-    
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
-  SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
-  HAL_Delay(100);
-    
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_DMA_Init();
-  MX_SDIO_SD_Init();
-  MX_USART1_UART_Init();
-  /* USER CODE BEGIN 2 */
-  HAL_Delay(100);
-    
-    
-    setvbuf(stdout, NULL, _IONBF, 0);
-    printf("\r\n");
-    printf("\r\n");
-    printf("\r\n");
-    printf("Start testing \n");
-    
-    uint32_t sys_clk = HAL_RCC_GetSysClockFreq();
-    printf("System Clock Frequency: %d Hz\n", sys_clk);
-    RCC_ClkInitTypeDef clkinitstruct = {0};
-    RCC_OscInitTypeDef oscinitstruct = {0};
-    uint32_t flashLatency;
-    /* Get clock configuration */
-    HAL_RCC_GetClockConfig(&clkinitstruct, &flashLatency);
-    /* Get oscillator configuration */
-    HAL_RCC_GetOscConfig(&oscinitstruct);
-    /* Assuming PLL is used as clock source and PLLQ is configured */
-    uint32_t pll_source_freq = (oscinitstruct.PLL.PLLSource == RCC_PLLSOURCE_HSE) ? HSE_VALUE : HSI_VALUE;
-    uint32_t pll_vco_freq = (pll_source_freq / oscinitstruct.PLL.PLLM) * oscinitstruct.PLL.PLLN;
-    uint32_t sdio_clk = pll_vco_freq / oscinitstruct.PLL.PLLQ;
-    printf("SDIO Clock Frequency: %d Hz\n", sdio_clk / (hsd.Init.ClockDiv + 2));
-    
-    // 确保 SD 卡已初始化成功
-    if (HAL_SD_GetCardState(&hsd) != HAL_SD_CARD_TRANSFER) {
-        printf("SD 卡未准备好，进入死循环。\n");
-        while (1);
-    }
-    
-    printf("SD 卡初始化成功！\n");
+void sdio_write_test()
+{    
+#define MAX_RETRIES 3          // 最大重试次数
+#define RETRY_DELAY_MS 1      // 重试前的延迟（毫秒）
     
     uint32_t BlockAdd = 0; // 起始块号
     
     /*--------------------------SD卡写测试----------------------------------*/
     
-#define MAX_RETRIES 3          // 最大重试次数
-#define RETRY_DELAY_MS 1      // 重试前的延迟（毫秒）
     
     generate_increasing_numbers(buffer_TX, sizeof(buffer_TX), 4) ;
     
@@ -279,12 +233,16 @@ int main(void)
     printf("数据写入完成！\n");
     printf("总写入时间: %.2f 秒\n", elapsed_time_sec);
     printf("写入速度: %.4f MB/s\n", write_speed);
+}
+
+void sdio_read_speed_test()
+{
     
-    /*--------------------------SD卡读取速度测试（可选）--------------------------*/
+    /*--------------------------SD卡读取速度测试--------------------------*/
     // 记录读取开始时间
     printf("开始读取数据从 SD 卡...\n");
 
-    start_time = HAL_GetTick();
+    uint32_t start_time = HAL_GetTick();
     for (uint32_t block = 0; block < NUM_TIMES_TO_READ; block++) 
     {
         // 启动 DMA 读取数据到当前活跃缓冲区
@@ -302,19 +260,23 @@ int main(void)
         }
     }
     // 记录读取结束时间
-    end_time = HAL_GetTick();
+    uint32_t end_time = HAL_GetTick();
     
     // 计算总读取时间（秒）
-    elapsed_time_sec = (end_time - start_time) / 1000.0f;
+    float elapsed_time_sec = (end_time - start_time) / 1000.0f;
     
     // 计算读取速度（MB/s）
-    write_speed = DATA_SIZE_TO_WRITE / (1024.0f * 1024.0f) / elapsed_time_sec;
+    float write_speed = DATA_SIZE_TO_WRITE / (1024.0f * 1024.0f) / elapsed_time_sec;
     
     printf("数据读取完成！\n");
     printf("总读取时间: %.2f 秒\n", elapsed_time_sec);
     printf("读取速度: %.2f MB/s\n", write_speed);
     
-    /*--------------------------SD卡读测试（可选）--------------------------*/
+}
+
+void sdio_read_compare()
+{
+    /*--------------------------SD卡读测试--------------------------*/
     printf("开始读取数据从 SD 卡...\n");
     
 //    generate_increasing_numbers(buffer_TX, sizeof(buffer_TX), 2) ;
@@ -351,20 +313,197 @@ int main(void)
     }
     
     printf("数据读取和验证完成，写入和读取的数据一致！\n");
-    
-    
-    
-  /* USER CODE END 2 */
+}
+/**************************以上是SD卡相关*********************************/
 
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
+/**************************以下是以太网相关***********************************/
+void tcp_server_init(void)
+{
+    /* 创建新的 TCP 控制块 */
+    tcp_server_pcb = tcp_new();
+
+    if (tcp_server_pcb != NULL)
+    {
+        err_t err;
+
+        /* 绑定到指定端口 */
+        err = tcp_bind(tcp_server_pcb, IP_ADDR_ANY, 5000);
+        if (err == ERR_OK)
+        {
+            /* 将控制块转换为监听状态 */
+            tcp_server_pcb = tcp_listen(tcp_server_pcb);
+
+            /* 设置接受连接的回调函数 */
+            tcp_accept(tcp_server_pcb, tcp_server_accept);
+
+//            printf("TCP 服务器已启动，监听端口 5000\r\n");
+        }
+        else
+        {
+            /* 绑定失败，释放控制块 */
+            memp_free(MEMP_TCP_PCB, tcp_server_pcb);
+//            printf("TCP 服务器绑定失败\r\n");
+        }
+    }
+    else
+    {
+//        printf("无法创建新的 TCP 控制块\r\n");
+    }
+}
+
+/* 当有新的客户端连接时被调用 */
+static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
+{
+    /* 设置接收数据的回调函数 */
+    tcp_recv(newpcb, tcp_server_recv);
+
+    /* 设置错误处理函数 */
+    tcp_err(newpcb, tcp_server_error);
+
+//    printf("客户端已连接\r\n");
+
+    return ERR_OK;
+}
+
+/* 当接收到数据时被调用 */
+static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
+{
+    if (p == NULL)
+    {
+        /* 连接已关闭，关闭 TCP 连接 */
+        tcp_server_close(tpcb);
+//        printf("客户端已断开连接\r\n");
+        return ERR_OK;
+    }
+    else
+    {
+        /* 处理接收到的数据 */
+        tcp_recved(tpcb, p->tot_len);  // 更新接收窗口
+
+        /* 将数据通过串口发送 */
+//        HAL_UART_Transmit(&huart1, p->payload, p->len, HAL_MAX_DELAY);
+
+//        /* 可选：在串口打印接收到的数据 */
+//        printf("接收到数据：%.*s\r\n", p->len, (char *)p->payload);
+        
+
+        /* 释放接收到的 pbuf */
+        pbuf_free(p);
+
+        return ERR_OK;
+    }
+}
+
+/* 当连接发生错误时被调用 */
+static void tcp_server_error(void *arg, err_t err)
+{
+    LWIP_UNUSED_ARG(err);
+    struct tcp_pcb *tpcb = (struct tcp_pcb *)arg;
+    if (tpcb != NULL)
+    {
+        tcp_server_close(tpcb);
+    }
+}
+
+/* 关闭 TCP 连接并释放资源 */
+static void tcp_server_close(struct tcp_pcb *tpcb)
+{
+    tcp_arg(tpcb, NULL);
+    tcp_recv(tpcb, NULL);
+    tcp_err(tpcb, NULL);
+    tcp_poll(tpcb, NULL, 0);
+
+    tcp_close(tpcb);
+}
+/**************************以上是以太网相关*********************************/
+
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+    
+    /* USER CODE BEGIN 1 */
+    
+    /* USER CODE END 1 */
+    
+    /* MCU Configuration--------------------------------------------------------*/
+    
+    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+    HAL_Init();
+    
+    /* USER CODE BEGIN Init */
+    
+    /* USER CODE END Init */
+    
+    /* Configure the system clock */
+    SystemClock_Config();
+    
+    /* USER CODE BEGIN SysInit */
+    HAL_Delay(100);
+    
+    /* USER CODE END SysInit */
+    
+    /* Initialize all configured peripherals */
+    MX_GPIO_Init();
+    MX_DMA_Init();
+    MX_SDIO_SD_Init();
+    MX_USART1_UART_Init();
+    MX_LWIP_Init();
+    /* USER CODE BEGIN 2 */
+    HAL_Delay(100);
+    
+    
+    setvbuf(stdout, NULL, _IONBF, 0);
+    printf("\n\nStart testing \n");
+    
+    uint32_t sys_clk = HAL_RCC_GetSysClockFreq();
+    printf("System Clock Frequency: %d Hz\n", sys_clk);
+    RCC_ClkInitTypeDef clkinitstruct = {0};
+    RCC_OscInitTypeDef oscinitstruct = {0};
+    uint32_t flashLatency;
+    
+    /* Get clock configuration */
+    HAL_RCC_GetClockConfig(&clkinitstruct, &flashLatency);
+    /* Get oscillator configuration */
+    HAL_RCC_GetOscConfig(&oscinitstruct);
+    /* Assuming PLL is used as clock source and PLLQ is configured */
+    uint32_t pll_source_freq = (oscinitstruct.PLL.PLLSource == RCC_PLLSOURCE_HSE) ? HSE_VALUE : HSI_VALUE;
+    uint32_t pll_vco_freq = (pll_source_freq / oscinitstruct.PLL.PLLM) * oscinitstruct.PLL.PLLN;
+    uint32_t sdio_clk = pll_vco_freq / oscinitstruct.PLL.PLLQ;
+    printf("SDIO Clock Frequency: %d Hz\n", sdio_clk / (hsd.Init.ClockDiv + 2));
+    
+    // 确保 SD 卡已初始化成功
+    if (HAL_SD_GetCardState(&hsd) != HAL_SD_CARD_TRANSFER) {
+        printf("SD 卡未准备好，进入死循环。\n");
+    }
+    else
+    {
+        printf("SD 卡初始化成功！\n");
+    }
+    
+    /* 初始化 TCP 服务器 */
+    tcp_server_init();
+    
+    sdio_write_test();
+    sdio_read_speed_test();
+    sdio_read_compare();
+    
+    /* USER CODE END 2 */
+    
+    /* Infinite loop */
+    /* USER CODE BEGIN WHILE */
     while (1)
     {
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
+        MX_LWIP_Process();
+        /* USER CODE END WHILE */
+        
+        /* USER CODE BEGIN 3 */
     }
-  /* USER CODE END 3 */
+    /* USER CODE END 3 */
 }
 
 /**

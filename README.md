@@ -44,17 +44,22 @@ SDIO Clock Frequency: 21000000 Hz
 SD 卡初始化成功！
 开始写入数据到 SD 卡...
 数据写入完成！
-总写入时间: 2.22 秒
-写入速度: 4.5106 MB/s
+总写入时间: 0.22 秒
+写入速度: 4.5249 MB/s
 开始读取数据从 SD 卡...
-已读取 4 MB...
-已读取 9 MB...
 数据读取完成！
-总读取时间: 4.28 秒
+总读取时间: 0.43 秒
 读取速度: 2.33 MB/s
 开始读取数据从 SD 卡...
-已读取 4 MB...
-已读取 9 MB...
 数据读取和验证完成，写入和读取的数据一致！
+```
+
+```python
+gdw@LAPTOP-2AD84GCC MINGW64 /d/100-Work/000-SmartLink/EthBlackBox/EthAssistant (main)
+$ python EthTestAssistant.py --file test1G.dat
+Connected to 192.168.88.10:5000
+Sending file: test1G.dat
+Sending: 100%|█████████████████████████████| 1.07G/1.07G [02:31<00:00, 7.09MB/s]
+File test1G.dat sent successfully.
 ```
 
