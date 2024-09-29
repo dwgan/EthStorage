@@ -41,11 +41,12 @@ SDIO：48Mbps
 Start testing 
 System Clock Frequency: 84000000 Hz
 SDIO Clock Frequency: 21000000 Hz
+LWIP初始化，当前MSS为: 2048字节
 SD 卡初始化成功！
 开始写入数据到 SD 卡...
 数据写入完成！
 总写入时间: 0.22 秒
-写入速度: 4.5249 MB/s
+写入速度: 4.5662 MB/s
 开始读取数据从 SD 卡...
 数据读取完成！
 总读取时间: 0.43 秒
@@ -56,10 +57,19 @@ SD 卡初始化成功！
 
 ```python
 gdw@LAPTOP-2AD84GCC MINGW64 /d/100-Work/000-SmartLink/EthBlackBox/EthAssistant (main)
-$ python EthTestAssistant.py --file test1G.dat
+$ python EthTestAssistant.py --file file100M.dat
 Connected to 192.168.88.10:5000
-Sending file: test1G.dat
-Sending: 100%|█████████████████████████████| 1.07G/1.07G [02:31<00:00, 7.09MB/s]
-File test1G.dat sent successfully.
+Sending file: file100M.dat
+Sending:  31%|█████████▍                    | 32.9M/105M [00:27<00:59, 1.21MB/s]
+Failed to send file: [WinError 10054] An existing connection was forcibly closed by the remote host
+
+```
+
+```python
+gdw@LAPTOP-2AD84GCC MINGW64 /d/100-Work/000-SmartLink/EthBlackBox/EthAssistant (main)
+$ python get_sd_data.py --ip 192.168.88.10 --port 5000 --file data.dat
+已连接到服务器 192.168.88.10:5000
+开始接收数据并保存到 data.dat
+接收数据超时，重试连接
 ```
 
