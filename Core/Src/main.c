@@ -60,7 +60,7 @@
 #define NUM_TIMES_TO_READ  DATA_SIZE_TO_WRITE/ (BLOCK_SIZE *DMA_NUM_BLOCKS_TO_READ) // 总共要写入的次数
 #define SD_CARD_CAPACITY_IN_BLOCKS SD_CAPACITY*1024*1024/BLOCK_SIZE
 //#define BUFFER_SIZE_W         DMA_NUM_BLOCKS_TO_WRITE*BLOCK_SIZE         // 缓冲区大小
-#define BUFFER_SIZE_W         1024// 缓冲区大小
+#define BUFFER_SIZE_W         600// 缓冲区大小
 #define BUFFER_SIZE_R         DMA_NUM_BLOCKS_TO_READ*BLOCK_SIZE         // 缓冲区大小
 #define BUFFER_DEPTH 2
 #define TEMP_BUFF_SIZE 2048
@@ -109,9 +109,9 @@ typedef struct
 
 TCP2SD_Buff_t tcp2sd_buff = {
     .write_prt = 0,
-    .write_prt_next = 0,
+    .write_prt_next = 1,
     .read_prt = 0,
-    .read_prt_next = 0,
+    .read_prt_next = 1,
     .index = {0},
     .buff_state = {READY2WRITE, READY2WRITE}, // 初始化所有缓冲区状态
     .buff = {0}
@@ -415,7 +415,7 @@ void write_data_to_uart()
     if (tcp2sd_buff.buff_state[tcp2sd_buff.read_prt] == READY2READ)
     {
         // 通过 UART 传输数据
-        HAL_UART_Transmit(&huart1, tcp2sd_buff.buff[tcp2sd_buff.read_prt], tcp2sd_buff.index[tcp2sd_buff.read_prt], HAL_MAX_DELAY);
+        HAL_UART_Transmit(&huart1, tcp2sd_buff.buff[tcp2sd_buff.read_prt], tcp2sd_buff.index[tcp2sd_buff.read_prt], 1000);
         while (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_TC) == RESET) {}  // 等待 UART 传输完成
 
         // 更新缓冲区状态为READY2WRITE
@@ -423,11 +423,14 @@ void write_data_to_uart()
         tcp2sd_buff.index[tcp2sd_buff.read_prt] = 0;
 
         // 切换到下一个读取缓冲区
-        tcp2sd_buff.read_prt = (tcp2sd_buff.read_prt + 1) % BUFFER_DEPTH;
+        tcp2sd_buff.read_prt = tcp2sd_buff.read_prt_next;
+        tcp2sd_buff.read_prt_next = (tcp2sd_buff.read_prt_next + 1) % BUFFER_DEPTH;
 
         // **如果 TCP 接收被暂停，则恢复**
         if (global_pcb != NULL)
         {
+            HAL_UART_Transmit(&huart1, temp_buff, temp_buff_len, 1000);
+            while (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_TC) == RESET) {}  // 等待 UART 传输完成
             // 重置 global_pcb
             struct tcp_pcb *temp_pcb = global_pcb;
             global_pcb = NULL;
@@ -551,7 +554,8 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
 
             uint8_t *data_ptr = payload;
             uint32_t data_len = len; // 当前pbuf中剩余的数据长度
-
+            uint16_t copy_len;
+            
             while (data_len > 0)
             {
                 // 计算当前写缓冲区剩余空间
@@ -562,19 +566,23 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
                 {
                     // 标记当前缓冲区为READY2READ
                     tcp2sd_buff.buff_state[tcp2sd_buff.write_prt] = READY2READ;
-
+                    
                     // 切换到下一个缓冲区
-                    tcp2sd_buff.write_prt = (tcp2sd_buff.write_prt + 1) % BUFFER_DEPTH;
-
+                    tcp2sd_buff.write_prt = tcp2sd_buff.write_prt_next;
+                    tcp2sd_buff.write_prt_next = (tcp2sd_buff.write_prt_next + 1) % BUFFER_DEPTH;
+                    
+                    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15);
                     // 检查下一个缓冲区是否可写
                     if (tcp2sd_buff.buff_state[tcp2sd_buff.write_prt] != READY2WRITE)
                     {
                         // 没有可用的缓冲区，暂停TCP接收
+                        temp_buff_len += len-copy_len;
+                        memcpy(temp_buff+temp_buff_len, data_ptr+copy_len,temp_buff_len); 
                         global_pcb = tpcb;
-
+                        
                         // 释放pbuf
                         pbuf_free(p);
-
+                        
                         return ERR_OK;
                     }
                     else
@@ -586,7 +594,7 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
                 }
 
                 // 计算本次可以复制的数据长度
-                uint16_t copy_len = data_len > buffer_space ? buffer_space : data_len;
+                copy_len = data_len > buffer_space ? buffer_space : data_len;
 
                 // 复制数据到缓冲区
                 memcpy(&tcp2sd_buff.buff[tcp2sd_buff.write_prt][tcp2sd_buff.index[tcp2sd_buff.write_prt]], data_ptr, copy_len);
@@ -601,11 +609,14 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
                 if (tcp2sd_buff.index[tcp2sd_buff.write_prt] >= BUFFER_SIZE_W)
                 {
                     tcp2sd_buff.buff_state[tcp2sd_buff.write_prt] = READY2READ;
-                    tcp2sd_buff.write_prt = (tcp2sd_buff.write_prt + 1) % BUFFER_DEPTH;
+                    tcp2sd_buff.write_prt = tcp2sd_buff.write_prt_next;
+                    tcp2sd_buff.write_prt_next = (tcp2sd_buff.write_prt_next + 1) % BUFFER_DEPTH;
 
                     // 检查下一个缓冲区是否可写
                     if (tcp2sd_buff.buff_state[tcp2sd_buff.write_prt] != READY2WRITE)
                     {
+//                        temp_buff_len += len-copy_len;
+//                        memcpy(temp_buff+temp_buff_len, data_ptr+copy_len,temp_buff_len); 
                         // 没有可用的缓冲区，暂停TCP接收
                         global_pcb = tpcb;
 
@@ -618,6 +629,7 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
                     {
                         // 重置新缓冲区的写入索引
                         tcp2sd_buff.index[tcp2sd_buff.write_prt] = 0;
+//                        buffer_space = BUFFER_SIZE_W;
                     }
                 }
             }
