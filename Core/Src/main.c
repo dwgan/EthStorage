@@ -60,7 +60,7 @@
 #define NUM_TIMES_TO_READ  DATA_SIZE_TO_WRITE/ (BLOCK_SIZE *DMA_NUM_BLOCKS_TO_READ) // 总共要写入的次数
 #define SD_CARD_CAPACITY_IN_BLOCKS SD_CAPACITY*1024*1024/BLOCK_SIZE
 //#define BUFFER_SIZE_W         DMA_NUM_BLOCKS_TO_WRITE*BLOCK_SIZE         // 缓冲区大小
-#define BUFFER_SIZE_W         600// 缓冲区大小
+#define BUFFER_SIZE_W         5000// 缓冲区大小
 #define BUFFER_SIZE_R         DMA_NUM_BLOCKS_TO_READ*BLOCK_SIZE         // 缓冲区大小
 #define BUFFER_DEPTH 2
 #define TEMP_BUFF_SIZE 2048
@@ -127,11 +127,8 @@ struct tcp_pcb *global_pcb = NULL;        // 用于暂停和恢复 TCP 接收
 int write_enable = 1;
 int read_enable = 1;
 int read_done = 1;
-static struct tcp_pcb *tcp_server_pcb;
 uint32_t write_address = 0;
 uint32_t read_address = 0;
-//volatile uint8_t current_buff_index = 0;      // 当前正在写入的缓冲区索引（0 或 1）
-//volatile uint8_t sd_write_in_progress = 0;    // 标志 SD 卡写入是否正在进行
 #pragma pack()
 /* USER CODE END PV */
 
@@ -139,10 +136,6 @@ uint32_t read_address = 0;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
-static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err);
-static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
-static void tcp_server_error(void *arg, err_t err);
-static void tcp_server_close(struct tcp_pcb *tpcb);
 //static err_t tcp_server_send_data(struct tcp_pcb *tpcb);
 
 /* USER CODE END PFP */
@@ -158,14 +151,6 @@ int fputc(int ch, FILE *f) {
 /**************************以下是SD卡相关*********************************/
 
 
-// 开始写入数据
-void Start_Write(void) {
-    if (HAL_SD_WriteBlocks_DMA(&hsd, tcp2sd_buff.buff[0], write_address, DMA_NUM_BLOCKS_TO_WRITE) != HAL_OK) {
-        // 写入错误处理
-        printf("开启中断写入错误\n");
-    }
-    HAL_SD_GetCardState(&hsd);
-}
 void HAL_SD_TxCpltCallback(SD_HandleTypeDef *hsd)
 {
 //    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15);
@@ -280,8 +265,8 @@ void sdio_write_test()
     float write_speed = DATA_SIZE_TO_WRITE / (1024.0f * 1024.0f) / elapsed_time_sec;
     
     printf("数据写入完成！\n");
-    printf("总写入时间: %.2f 秒\n", elapsed_time_sec);
-    printf("写入速度: %.4f MB/s\n", write_speed);
+    printf("总写入时间: %.2f 秒\n", (double)elapsed_time_sec);
+    printf("写入速度: %.4f MB/s\n", (double)write_speed);
 }
 
 void sdio_read_speed_test()
@@ -331,8 +316,8 @@ void sdio_read_speed_test()
     float write_speed = DATA_SIZE_TO_WRITE / (1024.0f * 1024.0f) / elapsed_time_sec;
     
     printf("数据读取完成！\n");
-    printf("总读取时间: %.2f 秒\n", elapsed_time_sec);
-    printf("读取速度: %.2f MB/s\n", write_speed);
+    printf("总读取时间: %.2f 秒\n", (double)elapsed_time_sec);
+    printf("读取速度: %.2f MB/s\n", (double)write_speed);
     
 }
 
@@ -389,286 +374,150 @@ void sdio_read_compare()
 /**************************以上是SD卡相关*********************************/
 
 /**************************以下是缓存相关***********************************/
-void reset_buffers()
-{
-    // 重置写入和读取指针
-    tcp2sd_buff.write_prt = 0;
-    tcp2sd_buff.read_prt = 0;
-
-    // 重置每个缓冲区的状态和索引
-    for (int i = 0; i < BUFFER_DEPTH; i++)
-    {
-        tcp2sd_buff.index[i] = 0;
-        tcp2sd_buff.buff_state[i] = READY2WRITE;
-    }
-
-    // 清空缓冲区内容（可选）
-    memset(tcp2sd_buff.buff, 0, sizeof(tcp2sd_buff.buff));
-
-    // 重置全局TCP控制块指针
-    global_pcb = NULL;
-}
-
-void write_data_to_uart()
-{
-    // 如果当前读取缓冲区有数据
-    if (tcp2sd_buff.buff_state[tcp2sd_buff.read_prt] == READY2READ)
-    {
-        // 通过 UART 传输数据
-        HAL_UART_Transmit(&huart1, tcp2sd_buff.buff[tcp2sd_buff.read_prt], tcp2sd_buff.index[tcp2sd_buff.read_prt], 1000);
-        while (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_TC) == RESET) {}  // 等待 UART 传输完成
-
-        // 更新缓冲区状态为READY2WRITE
+void uart_send_task(void) {
+    // 检查当前缓冲区是否可读并发送数据
+    if (tcp2sd_buff.buff_state[tcp2sd_buff.read_prt] == READY2READ) {
+        // 通过 UART 发送数据
+        HAL_UART_Transmit(&huart1, tcp2sd_buff.buff[tcp2sd_buff.read_prt], tcp2sd_buff.index[tcp2sd_buff.read_prt], HAL_MAX_DELAY);
+        
+        // 标记缓冲区为可写
         tcp2sd_buff.buff_state[tcp2sd_buff.read_prt] = READY2WRITE;
         tcp2sd_buff.index[tcp2sd_buff.read_prt] = 0;
 
-        // 切换到下一个读取缓冲区
-        tcp2sd_buff.read_prt = tcp2sd_buff.read_prt_next;
-        tcp2sd_buff.read_prt_next = (tcp2sd_buff.read_prt_next + 1) % BUFFER_DEPTH;
-
-        // **如果 TCP 接收被暂停，则恢复**
-        if (global_pcb != NULL)
-        {
-            HAL_UART_Transmit(&huart1, temp_buff, temp_buff_len, 1000);
-            while (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_TC) == RESET) {}  // 等待 UART 传输完成
-            // 重置 global_pcb
-            struct tcp_pcb *temp_pcb = global_pcb;
-            global_pcb = NULL;
-
-            // 重新调用 tcp_recved，通知 TCP 可以继续发送数据
-            tcp_recved(temp_pcb, 1);
-
-            // 重新设置接收回调函数
-            tcp_recv(temp_pcb, tcp_server_recv);
-        }
+        // 切换到下一个缓冲区
+        tcp2sd_buff.read_prt = (tcp2sd_buff.read_prt + 1) % BUFFER_DEPTH;
     }
+//    else if (tcp2sd_buff.buff_state[(tcp2sd_buff.read_prt + 1) % BUFFER_DEPTH] == READY2READ)
+//    {
+//        tcp2sd_buff.read_prt = (tcp2sd_buff.read_prt + 1) % BUFFER_DEPTH;
+//    }
 }
-
-
-void flush_data_to_uart()
-{
-    // 检查TCP数据接收是否超时
+#define TIMEOUT_THRESHOLD 1000  // 超时阈值 (ms) 根据需要调整
+uint8_t is_udp_rcv=0;
+void check_timeout_and_flush(void) {
     uint32_t current_time = HAL_GetTick();
-    if ((current_time - last_tcp_receive_time) > 1000)
-    {
-        // 检查是否已经有数据在缓冲区中
-        if (tcp2sd_buff.buff_state[tcp2sd_buff.write_prt] == READY2WRITE && tcp2sd_buff.index[tcp2sd_buff.write_prt] > 0)
-        {
-            // 将当前写缓冲区标记为 READY2READ，等待发送
+    
+    // 检查是否超时
+    if ((current_time - last_tcp_receive_time) > TIMEOUT_THRESHOLD && is_udp_rcv) {
+        is_udp_rcv = 0;
+        // 如果当前缓冲区有数据尚未发送，则强制发送
+        if (tcp2sd_buff.index[tcp2sd_buff.write_prt] > 0) {
             tcp2sd_buff.buff_state[tcp2sd_buff.write_prt] = READY2READ;
+            tcp2sd_buff.write_prt = (tcp2sd_buff.write_prt + 1) % BUFFER_DEPTH;
+            uart_send_task();  // 触发UART发送
         }
-        
-        // 处理所有剩余的缓冲区数据
-        while (tcp2sd_buff.buff_state[tcp2sd_buff.read_prt] == READY2READ)
-        {
-            // 输出缓冲区数据
-            write_data_to_uart();
-        }
-        
-        // 如果需要，可以关闭TCP连接
-        if (global_pcb != NULL)
-        {
-            tcp_server_close(global_pcb);
-            global_pcb = NULL;
-        }
-        
-        // 重置最后接收时间戳，防止重复进入超时处理
-        last_tcp_receive_time = HAL_GetTick();
     }
 }
+
 
 /**************************以上是缓存相关***********************************/
 /**************************以下是以太网相关***********************************/
-void tcp_server_init(void)
-{
-    /* 创建新的 TCP 控制块 */
-    tcp_server_pcb = tcp_new();
+#include "lwip/udp.h"
+#define TARGET_IP "192.168.88.2"  // 上位机的IP地址
+#define TARGET_IP1 "192.168.88.3"  // 上位机的IP地址
+#define TARGET_PORT 5006          // 上位机接收的端口号
 
-    if (tcp_server_pcb != NULL)
-    {
-        err_t err;
+// 全局变量用于存储 UDP 连接
+struct udp_pcb *udp_pcb;
+struct udp_pcb *udp_send_pcb;
+struct udp_pcb *udp_send_pcb1;
 
-        /* 绑定到指定端口 */
-        err = tcp_bind(tcp_server_pcb, IP_ADDR_ANY, 5000);
-        if (err == ERR_OK)
-        {
-            /* 将控制块转换为监听状态 */
-            tcp_server_pcb = tcp_listen(tcp_server_pcb);
-
-            /* 设置接受连接的回调函数 */
-            tcp_accept(tcp_server_pcb, tcp_server_accept);
-
-//            printf("TCP 服务器已启动，监听端口 5000\r\n");
-        }
-        else
-        {
-            /* 绑定失败，释放控制块 */
-            memp_free(MEMP_TCP_PCB, tcp_server_pcb);
-//            printf("TCP 服务器绑定失败\r\n");
-        }
-    }
-    else
-    {
-//        printf("无法创建新的 TCP 控制块\r\n");
-    }
-}
-
-/* 当有新的客户端连接时被调用 */
-static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
-{
-    /* 设置接收数据的回调函数 */
-    tcp_recv(newpcb, tcp_server_recv);
-
-    /* 设置错误处理函数 */
-    tcp_err(newpcb, tcp_server_error);
-
-    // 重置最后接收时间戳
-    last_tcp_receive_time = HAL_GetTick();
-    
-//    printf("客户端已连接\r\n");
-//    reset_buffers();  // 初始化缓冲区和相关变量，确保第一次连接时状态一致
-    return ERR_OK;
-}
-
-static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
-{
-    if (p == NULL)
-    {
-        last_tcp_receive_time = HAL_GetTick();
+void udp_receive_callback(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
+    if (p != NULL) {
+        uint16_t remaining_data = p->len;  // 剩余数据的长度
+        uint8_t *data_ptr = (uint8_t *)p->payload;  // 指向接收到的UDP数据
         
-        // 连接关闭，处理必要的剩余数据
-        tcp_server_close(tpcb);
-        return ERR_OK;
-    }
-    else
-    {
-        struct pbuf *q = p;
-        uint32_t total_copied_len = 0; // 总共复制的数据长度
-
-        while (q != NULL)
-        {
-            last_tcp_receive_time = HAL_GetTick();
-            
-            uint16_t len = q->len;
-            uint8_t *payload = (uint8_t *)q->payload;
-
-            uint8_t *data_ptr = payload;
-            uint32_t data_len = len; // 当前pbuf中剩余的数据长度
-            uint16_t copy_len;
-            
-            while (data_len > 0)
-            {
-                // 计算当前写缓冲区剩余空间
-                uint32_t buffer_space = BUFFER_SIZE_W - tcp2sd_buff.index[tcp2sd_buff.write_prt];
-
-                // 如果当前写缓冲区已满，切换到下一个缓冲区
-                if (buffer_space == 0)
-                {
-                    // 标记当前缓冲区为READY2READ
+        // 更新最近接收时间
+        last_tcp_receive_time = HAL_GetTick();
+        is_udp_rcv = 1;
+        // 处理当前缓冲区
+        while (remaining_data > 0) {
+            // 检查当前缓冲区是否可写
+            if (tcp2sd_buff.buff_state[tcp2sd_buff.write_prt] == READY2WRITE) {
+                uint32_t available_space = BUFFER_SIZE_W - tcp2sd_buff.index[tcp2sd_buff.write_prt];  // 当前缓冲区剩余空间
+                
+                if (available_space >= remaining_data) {
+                    // 缓冲区有足够的空间写入整个数据包
+                    memcpy(tcp2sd_buff.buff[tcp2sd_buff.write_prt] + tcp2sd_buff.index[tcp2sd_buff.write_prt], data_ptr, remaining_data);
+                    tcp2sd_buff.index[tcp2sd_buff.write_prt] += remaining_data;  // 更新缓冲区写入位置
+                    remaining_data = 0;  // 数据已经全部写入
+                } else {
+                    // 缓冲区没有足够空间，需要拆分数据包
+                    memcpy(tcp2sd_buff.buff[tcp2sd_buff.write_prt] + tcp2sd_buff.index[tcp2sd_buff.write_prt], data_ptr, available_space);
+                    tcp2sd_buff.index[tcp2sd_buff.write_prt] += available_space;
+                    remaining_data -= available_space;  // 减少已处理的数据量
+                    data_ptr += available_space;  // 移动数据指针
+                    
+                    // 标记当前缓冲区为可读
                     tcp2sd_buff.buff_state[tcp2sd_buff.write_prt] = READY2READ;
                     
                     // 切换到下一个缓冲区
-                    tcp2sd_buff.write_prt = tcp2sd_buff.write_prt_next;
-                    tcp2sd_buff.write_prt_next = (tcp2sd_buff.write_prt_next + 1) % BUFFER_DEPTH;
+                    tcp2sd_buff.write_prt = (tcp2sd_buff.write_prt + 1) % BUFFER_DEPTH;
                     
-                    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_15);
-                    // 检查下一个缓冲区是否可写
-                    if (tcp2sd_buff.buff_state[tcp2sd_buff.write_prt] != READY2WRITE)
-                    {
-                        // 没有可用的缓冲区，暂停TCP接收
-                        temp_buff_len += len-copy_len;
-                        memcpy(temp_buff+temp_buff_len, data_ptr+copy_len,temp_buff_len); 
-                        global_pcb = tpcb;
-                        
-                        // 释放pbuf
-                        pbuf_free(p);
-                        
-                        return ERR_OK;
+                    // 检查新的缓冲区是否可写
+                    if (tcp2sd_buff.buff_state[tcp2sd_buff.write_prt] != READY2WRITE) {
+                        // 如果下一个缓冲区也不能写，可能需要处理错误或等待处理
+                        // 这里可以加上丢弃数据或阻塞等待处理逻辑
+                        break;
                     }
-                    else
-                    {
-                        // 重置新缓冲区的写入索引
-                        tcp2sd_buff.index[tcp2sd_buff.write_prt] = 0;
-                        buffer_space = BUFFER_SIZE_W;
-                    }
-                }
-
-                // 计算本次可以复制的数据长度
-                copy_len = data_len > buffer_space ? buffer_space : data_len;
-
-                // 复制数据到缓冲区
-                memcpy(&tcp2sd_buff.buff[tcp2sd_buff.write_prt][tcp2sd_buff.index[tcp2sd_buff.write_prt]], data_ptr, copy_len);
-
-                // 更新索引和指针
-                tcp2sd_buff.index[tcp2sd_buff.write_prt] += copy_len;
-                data_ptr += copy_len;
-                data_len -= copy_len;
-                total_copied_len += copy_len;
-
-                // 如果当前缓冲区已满，标记为READY2READ并切换缓冲区
-                if (tcp2sd_buff.index[tcp2sd_buff.write_prt] >= BUFFER_SIZE_W)
-                {
-                    tcp2sd_buff.buff_state[tcp2sd_buff.write_prt] = READY2READ;
-                    tcp2sd_buff.write_prt = tcp2sd_buff.write_prt_next;
-                    tcp2sd_buff.write_prt_next = (tcp2sd_buff.write_prt_next + 1) % BUFFER_DEPTH;
-
-                    // 检查下一个缓冲区是否可写
-                    if (tcp2sd_buff.buff_state[tcp2sd_buff.write_prt] != READY2WRITE)
-                    {
-//                        temp_buff_len += len-copy_len;
-//                        memcpy(temp_buff+temp_buff_len, data_ptr+copy_len,temp_buff_len); 
-                        // 没有可用的缓冲区，暂停TCP接收
-                        global_pcb = tpcb;
-
-                        // 释放pbuf
-                        pbuf_free(p);
-
-                        return ERR_OK;
-                    }
-                    else
-                    {
-                        // 重置新缓冲区的写入索引
-                        tcp2sd_buff.index[tcp2sd_buff.write_prt] = 0;
-//                        buffer_space = BUFFER_SIZE_W;
-                    }
+                    
+                    // 重置新缓冲区的写入索引
+                    tcp2sd_buff.index[tcp2sd_buff.write_prt] = 0;
                 }
             }
-
-            // 处理下一个pbuf
-            q = q->next;
         }
-
-        // 确认已接收的数据量
-        tcp_recved(tpcb, total_copied_len);
-
-        // 释放pbuf
+        
+        // 通过 UDP 将接收到的数据发送回特定 IP 和端口
+        struct pbuf *udp_buf = pbuf_alloc(PBUF_TRANSPORT, remaining_data, PBUF_RAM);
+        if (udp_buf != NULL) {
+            memcpy(udp_buf->payload, data_ptr, p->len);
+            udp_send(udp_send_pcb, udp_buf);  // 发送数据
+            pbuf_free(udp_buf);  // 释放 pbuf
+        }
+        
+        // 通过 UDP 将接收到的数据发送回特定 IP 和端口
+        struct pbuf *udp_buf1 = pbuf_alloc(PBUF_TRANSPORT, remaining_data, PBUF_RAM);
+        if (udp_buf1 != NULL) {
+            memcpy(udp_buf1->payload, data_ptr, p->len);
+            udp_send(udp_send_pcb1, udp_buf1);  // 发送数据
+            pbuf_free(udp_buf1);  // 释放 pbuf
+        }
+        
+        // 释放 pbuf 结构
         pbuf_free(p);
-
-        return ERR_OK;
     }
 }
 
 
-/* 当连接发生错误时被调用 */
-static void tcp_server_error(void *arg, err_t err)
-{
-    LWIP_UNUSED_ARG(err);
-    struct tcp_pcb *tpcb = (struct tcp_pcb *)arg;
-    if (tpcb != NULL)
-    {
-        tcp_server_close(tpcb);
+void my_udp_init(void) {
+    // 你的 UDP 初始化代码
+    udp_pcb = udp_new();
+    if (udp_pcb != NULL) {
+        udp_bind(udp_pcb, IP_ADDR_ANY, 5005);
+        udp_recv(udp_pcb, udp_receive_callback, NULL);
     }
 }
 
-/* 关闭 TCP 连接并释放资源 */
-static void tcp_server_close(struct tcp_pcb *tpcb)
-{
-    tcp_arg(tpcb, NULL);
-    tcp_recv(tpcb, NULL);
-    tcp_err(tpcb, NULL);
-    tcp_poll(tpcb, NULL, 0);
+// 初始化发送目标
+void udp_send_init(void) {
+    ip_addr_t dest_ip_addr;
+    ipaddr_aton(TARGET_IP, &dest_ip_addr);  // 转换目标IP为正确的格式
 
-    tcp_close(tpcb);
+    udp_send_pcb = udp_new();
+    if (udp_send_pcb != NULL) {
+        udp_connect(udp_send_pcb, &dest_ip_addr, TARGET_PORT);  // 连接到目标IP和端口
+    }
+}
+
+// 初始化发送目标
+void udp_send_init1(void) {
+    ip_addr_t dest_ip_addr;
+    ipaddr_aton(TARGET_IP1, &dest_ip_addr);  // 转换目标IP为正确的格式
+
+    udp_send_pcb1 = udp_new();
+    if (udp_send_pcb1 != NULL) {
+        udp_connect(udp_send_pcb1, &dest_ip_addr, TARGET_PORT);  // 连接到目标IP和端口
+    }
 }
 
 /**************************以上是以太网相关*********************************/
@@ -681,35 +530,35 @@ static void tcp_server_close(struct tcp_pcb *tpcb)
   */
 int main(void)
 {
-
-  /* USER CODE BEGIN 1 */
     
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
-
-  /* USER CODE BEGIN Init */
+    /* USER CODE BEGIN 1 */
     
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
-  SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
+    /* USER CODE END 1 */
+    
+    /* MCU Configuration--------------------------------------------------------*/
+    
+    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+    HAL_Init();
+    
+    /* USER CODE BEGIN Init */
+    
+    /* USER CODE END Init */
+    
+    /* Configure the system clock */
+    SystemClock_Config();
+    
+    /* USER CODE BEGIN SysInit */
     HAL_Delay(100);
     
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_DMA_Init();
-  MX_SDIO_SD_Init();
-  MX_USART1_UART_Init();
-  MX_LWIP_Init();
-  /* USER CODE BEGIN 2 */
+    /* USER CODE END SysInit */
+    
+    /* Initialize all configured peripherals */
+    MX_GPIO_Init();
+    MX_DMA_Init();
+    MX_SDIO_SD_Init();
+    MX_USART1_UART_Init();
+    MX_LWIP_Init();
+    /* USER CODE BEGIN 2 */
     HAL_Delay(100);
     
     
@@ -732,10 +581,6 @@ int main(void)
     uint32_t sdio_clk = pll_vco_freq / oscinitstruct.PLL.PLLQ;
     printf("SDIO Clock Frequency: %d Hz\n", sdio_clk / (hsd.Init.ClockDiv + 2));
     
-    struct tcp_pcb *tpcb;
-    uint16_t mss = tcp_mss(tpcb);
-    printf("LWIP初始化，当前MSS为: %u字节\n", mss);
-
     // 确保 SD 卡已初始化成功
     if (HAL_SD_GetCardState(&hsd) != HAL_SD_CARD_TRANSFER) {
         printf("SD 卡未准备好，进入死循环。\n");
@@ -744,28 +589,24 @@ int main(void)
     {
         printf("SD 卡初始化成功！\n");
     }
+    my_udp_init();
+    udp_send_init();
+    udp_send_init1();
+    /* USER CODE END 2 */
     
-    /* 初始化 TCP 服务器 */
-    tcp_server_init();
-//    generate_increasing_numbers(tcp2sd_buff.buff[0], sizeof(tcp2sd_buff.buff[0]), 2) ;   
-//    sdio_write_test();
-//    HAL_Delay(100);
-//    sdio_read_speed_test();
-//    sdio_read_compare();
-//    reset_buffers();
-  /* USER CODE END 2 */
-
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
+    /* Infinite loop */
+    /* USER CODE BEGIN WHILE */
     while (1)
     {
         MX_LWIP_Process();
-        write_data_to_uart();
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
+        uart_send_task();   // 处理 UART 发送
+        check_timeout_and_flush();
+        
+        /* USER CODE END WHILE */
+        
+        /* USER CODE BEGIN 3 */
     }
-  /* USER CODE END 3 */
+    /* USER CODE END 3 */
 }
 
 /**
