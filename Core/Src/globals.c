@@ -7,11 +7,21 @@ GlobalConfig_t g_Config = {
     .USART_BaudRate = 460800,           // 串口波特率
     .USART_Parity = UART_PARITY_NONE, // 串口校验位，默认为无校验 N
     .USART_StopBits = UART_STOPBITS_1, // 串口停止位，默认为 1
-    .workMode = WRITE,               // 操作模式，默认为读取 0
+    .workMode = READ,               // 操作模式，默认为读取 0
     .dataInterface = 0,                // 数据接口，默认为以太网 0
-    .sdioAddrW = 0,                // SDIO 当前的写地址
+    .sdioAddrW = 1088,                // SDIO 当前的写地址
     .sdioAddrR = 0                // SDIO 当前的写地址
 };
+//GlobalConfig_t g_Config = {
+//    .verNum = 0x06010101,             // 固件版本
+//    .USART_BaudRate = 460800,           // 串口波特率
+//    .USART_Parity = UART_PARITY_NONE, // 串口校验位，默认为无校验 N
+//    .USART_StopBits = UART_STOPBITS_1, // 串口停止位，默认为 1
+//    .workMode = WRITE,               // 操作模式，默认为读取 0
+//    .dataInterface = 0,                // 数据接口，默认为以太网 0
+//    .sdioAddrW = 0,                // SDIO 当前的写地址
+//    .sdioAddrR = 0                // SDIO 当前的写地址
+//};
 
 // 写入单个成员到 Flash
 void write_single_variable_to_flash(uint32_t flash_addr, uint32_t *data) {
