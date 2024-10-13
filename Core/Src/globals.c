@@ -9,7 +9,7 @@ GlobalConfig_t g_Config = {
     .USART_StopBits = UART_STOPBITS_1, // 串口停止位，默认为 1
     .workMode = READ,               // 操作模式，默认为读取 0
     .dataInterface = 0,                // 数据接口，默认为以太网 0
-    .sdioAddrW = 1088,                // SDIO 当前的写地址
+    .sdioAddrW = 15488,                // SDIO 当前的写地址
     .sdioAddrR = 0                // SDIO 当前的写地址
 };
 //GlobalConfig_t g_Config = {

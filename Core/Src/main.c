@@ -42,6 +42,7 @@
 #include "lwip/timeouts.h"
 #include <stddef.h>  // 包含 offsetof 宏
 
+#include "lwip/udp.h"
 #include "globals.h"
 /* USER CODE END Includes */
 
@@ -56,7 +57,7 @@
 #define SD_CAPACITY 100 // 单位 MBytes
 #define BLOCK_SIZE         512 // 一个块的字节数
 #define DATA_SIZE_TO_WRITE 100*1024*1024 // 1MB = 1*1024*1024字节
-#define DMA_NUM_BLOCKS_TO_WRITE 64 // 每一次DMA写入块的数量
+#define DMA_NUM_BLOCKS_TO_WRITE 32 // 每一次DMA写入块的数量
 #define DMA_NUM_BLOCKS_TO_READ  16 // 每一次DMA读出块的数量
 #define NUM_TIMES_TO_WRITE DATA_SIZE_TO_WRITE/ (BLOCK_SIZE *DMA_NUM_BLOCKS_TO_WRITE) // 总共要写入的次数
 #define NUM_TIMES_TO_READ  DATA_SIZE_TO_WRITE/ (BLOCK_SIZE *DMA_NUM_BLOCKS_TO_READ) // 总共要写入的次数
@@ -72,8 +73,7 @@
 #define LAN8720_PHY_ADDRESS  0x00  // 根据你的硬件设计设置正确的PHY地址
 
 
-#include "lwip/udp.h"
-#define TARGET_IP "192.168.88.78"  // 上位机的IP地址
+#define TARGET_IP "192.168.88.2"  // 上位机的IP地址
 #define TARGET_PORT 5007          // 上位机接收的端口号
 
 #define TIMEOUT_THRESHOLD 1000  // 超时阈值 (ms) 根据需要调整
@@ -88,8 +88,6 @@
 
 /* USER CODE BEGIN PV */
 
-
-
 #pragma pack(1)
 // buff_state
 // 0: ready for writing data to buff
@@ -99,17 +97,15 @@
 typedef enum
 {
     WAIT4INPUT=0,
-    INPUTING,
-    WAIT4OUTPUT=1,
-    OUTPUTING=2
+    INPUTING=1,
+    WAIT4OUTPUT=2,
+    OUTPUTING=3
 }BUFF_STATE;
 
 typedef struct
 {
     uint8_t input_ptr;//当前正在写入的buff
-//    uint8_t write_prt_next;//当前正在写入的buff
-    uint8_t output_ptr;//当前正在写入的buff
-//    uint8_t read_prt_next;//当前正在写入的buff
+    uint8_t output_ptr;//当前正在输出的buff
     uint32_t index[BUFFER_DEPTH];//写入指针，指示当前buff字节位置
     BUFF_STATE buff_state[BUFFER_DEPTH];
     uint8_t buff[BUFFER_DEPTH][BUFFER_SIZE_W];
@@ -118,9 +114,7 @@ typedef struct
 typedef struct
 {
     uint8_t input_ptr;//当前正在写入的buff
-//    uint8_t write_prt_next;//当前正在写入的buff
-    uint8_t output_ptr;//当前正在写入的buff
-//    uint8_t read_prt_next;//当前正在写入的buff
+    uint8_t output_ptr;//当前正在输出的buff
     uint32_t index[BUFFER_DEPTH];//写入指针，指示当前buff字节位置
     BUFF_STATE buff_state[BUFFER_DEPTH];
     uint8_t buff[BUFFER_DEPTH][BUFFER_SIZE_R];
@@ -128,9 +122,7 @@ typedef struct
 
 UDP2SD_Buff_t udp2sd_buff = {
     .input_ptr = 0,
-//    .write_prt_next = 1,
     .output_ptr = 0,
-//    .read_prt_next = 1,
     .index = {0},
     .buff_state = {WAIT4INPUT, WAIT4INPUT}, // 初始化所有缓冲区状态
     .buff = {0}
@@ -138,9 +130,7 @@ UDP2SD_Buff_t udp2sd_buff = {
 
 SD2UDP_Buff_t sd2udp_buff = {
     .input_ptr = 0,
-//    .write_prt_next = 1,
     .output_ptr = 0,
-//    .read_prt_next = 1,
     .index = {0},
     .buff_state = {WAIT4INPUT, WAIT4INPUT}, // 初始化所有缓冲区状态
     .buff = {0}
@@ -163,6 +153,7 @@ uint8_t is_udp_rcv=0;
 // 全局变量用于存储 UDP 连接
 struct udp_pcb *udp_pcb;
 struct udp_pcb *udp_send_pcb;
+
 #pragma pack()
 /* USER CODE END PV */
 
@@ -215,7 +206,7 @@ void HAL_SD_RxCpltCallback(SD_HandleTypeDef *hsd)
     {
         sdio_read_done = 1;
         // 读指针加
-//        read_address += sd2udp_buff.index[sd2udp_buff.input_ptr];
+        //        read_address += sd2udp_buff.index[sd2udp_buff.input_ptr];
         // buff可读
         sd2udp_buff.buff_state[sd2udp_buff.input_ptr] = WAIT4OUTPUT;
         // 切换到下一个buff
@@ -248,7 +239,7 @@ void sdio_write_task(void) {
 void sdio_read_task(void)
 {
     uint32_t read_num=0;
-    if (sd2udp_buff.buff_state[sd2udp_buff.input_ptr] == WAIT4INPUT)
+    if (sd2udp_buff.buff_state[sd2udp_buff.input_ptr] == WAIT4INPUT && sdio_read_done == 1)
     {
         if (read_address < *write_address)
         {
@@ -264,7 +255,6 @@ void sdio_read_task(void)
                 sd2udp_buff.index[sd2udp_buff.input_ptr] = read_num * BLOCK_SIZE;
                 // buff 状态变
                 sd2udp_buff.buff_state[sd2udp_buff.input_ptr] = INPUTING;
-                sd2udp_buff.input_ptr = (sd2udp_buff.input_ptr + 1) % BUFFER_DEPTH;
                 sdio_read_done = 0;                
 //                printf("读取状态：%d，第%d个block\n", status, read_address);
             }
@@ -349,7 +339,8 @@ void udp_receive_callback(void *arg, struct udp_pcb *pcb, struct pbuf *p, const 
 void udp_send_task()
 {
     uint32_t send_num=0;
-    uint32_t send_index=0;
+    static uint32_t send_index=0;
+    static uint8_t first_pack = 1;
     err_t status;
     struct pbuf *udp_buf;
     if (sd2udp_buff.buff_state[sd2udp_buff.output_ptr] == WAIT4OUTPUT)
@@ -358,18 +349,26 @@ void udp_send_task()
         {
             send_num = sd2udp_buff.index[sd2udp_buff.output_ptr] - send_index;
             send_num = send_num > UDP_SEND_SIZE ? UDP_SEND_SIZE: send_num;
-//            // 将buff中的数据通过UDP发送回特定 IP 和端口
-//            udp_buf = pbuf_alloc(PBUF_TRANSPORT, send_num, PBUF_RAM);
-//            if (udp_buf != NULL) {
-//                memcpy(udp_buf->payload, sd2udp_buff.buff[sd2udp_buff.output_ptr]+send_index, send_num);
-//                status = udp_send(udp_send_pcb, udp_buf);  // 发送数据
-//                pbuf_free(udp_buf);  // 释放 pbuf
-//            }
-            HAL_UART_Transmit(&huart1, (uint8_t *)&sd2udp_buff.buff[sd2udp_buff.output_ptr]+send_index, send_num, HAL_MAX_DELAY);
-            
-            //            printf("UDP发送状态：%d，发送第%d个block\n", status, send_num);
+            // 将buff中的数据通过UDP发送回特定 IP 和端口
+            udp_buf = pbuf_alloc(PBUF_TRANSPORT, send_num, PBUF_RAM);
+            if (udp_buf != NULL) {
+                memcpy(udp_buf->payload, sd2udp_buff.buff[sd2udp_buff.output_ptr]+send_index, send_num);
+                status = udp_send(udp_send_pcb, udp_buf);  // 发送数据
+                HAL_Delay(1);
+                pbuf_free(udp_buf);  // 释放 pbuf
+            }
+//            HAL_UART_Transmit(&huart1, (uint8_t *)&sd2udp_buff.buff[sd2udp_buff.output_ptr]+send_index, send_num, HAL_MAX_DELAY);
+            //                        printf("UDP发送状态：%d，发送第%d个block\n", status, send_num);
+//                HAL_Delay(2);
             send_index += send_num;
+            if (first_pack && send_index >= UDP_SEND_SIZE)
+            {
+                HAL_Delay(10);
+                first_pack = 0;
+                return;
+            }
         }
+        send_index = 0;
         sd2udp_buff.index[sd2udp_buff.output_ptr] = 0;
         sd2udp_buff.buff_state[sd2udp_buff.output_ptr] = WAIT4INPUT;
         sd2udp_buff.output_ptr = (sd2udp_buff.output_ptr + 1) % BUFFER_DEPTH;
@@ -406,35 +405,35 @@ void udp_send_init(void) {
   */
 int main(void)
 {
-
-  /* USER CODE BEGIN 1 */
     
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
-
-  /* USER CODE BEGIN Init */
+    /* USER CODE BEGIN 1 */
     
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
-  SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
+    /* USER CODE END 1 */
+    
+    /* MCU Configuration--------------------------------------------------------*/
+    
+    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+    HAL_Init();
+    
+    /* USER CODE BEGIN Init */
+    
+    /* USER CODE END Init */
+    
+    /* Configure the system clock */
+    SystemClock_Config();
+    
+    /* USER CODE BEGIN SysInit */
     HAL_Delay(100);
     
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_DMA_Init();
-  MX_SDIO_SD_Init();
-  MX_USART1_UART_Init();
-  MX_LWIP_Init();
-  /* USER CODE BEGIN 2 */
+    /* USER CODE END SysInit */
+    
+    /* Initialize all configured peripherals */
+    MX_GPIO_Init();
+    MX_DMA_Init();
+    MX_SDIO_SD_Init();
+    MX_USART1_UART_Init();
+    MX_LWIP_Init();
+    /* USER CODE BEGIN 2 */
     HAL_Delay(100);
     
     
@@ -489,17 +488,15 @@ int main(void)
     if (g_Config.workMode == READ)
     {
         udp_send_init();
-        HAL_Delay(5000);
+        HAL_Delay(3000);
     }
     
-  /* USER CODE END 2 */
-
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
+    /* USER CODE END 2 */
+    
+    /* Infinite loop */
+    /* USER CODE BEGIN WHILE */
     while (1)
     {
-        MX_LWIP_Process();
-        
         if (g_Config.workMode == WRITE)
         {
             sdio_write_task();
@@ -510,12 +507,12 @@ int main(void)
             sdio_read_task();
             udp_send_task();
         }
+        MX_LWIP_Process();
+        /* USER CODE END WHILE */
         
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
+        /* USER CODE BEGIN 3 */
     }
-  /* USER CODE END 3 */
+    /* USER CODE END 3 */
 }
 
 /**
