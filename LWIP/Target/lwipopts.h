@@ -49,6 +49,8 @@
 /* Parameters set in STM32CubeMX LwIP Configuration GUI -*/
 /*----- Value in opt.h for LWIP_TCP: 1 -----*/
 #define LWIP_TCP 0
+/*----- Default Value for MEMP_NUM_TCP_PCB: 5 ---*/
+#define MEMP_NUM_TCP_PCB 4
 /*----- Value in opt.h for NO_SYS: 0 -----*/
 #define NO_SYS 1
 /*----- Value in opt.h for SYS_LIGHTWEIGHT_PROT: 1 -----*/
@@ -99,6 +101,8 @@
 #define CHECKSUM_CHECK_ICMP 0
 /*----- Value in opt.h for CHECKSUM_CHECK_ICMP6: 1 -----*/
 #define CHECKSUM_CHECK_ICMP6 0
+/*----- Default Value for LWIP_DBG_MIN_LEVEL: LWIP_DBG_LEVEL_ALL ---*/
+#define LWIP_DBG_MIN_LEVEL LWIP_DBG_MASK_LEVEL
 /*-----------------------------------------------------------------------------*/
 /* USER CODE BEGIN 1 */
 //#define TCP_SND_BUF             (8 * TCP_MSS)  // 发送缓冲区大小

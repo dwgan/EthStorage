@@ -31,8 +31,8 @@
         <CpuHaltOnBreakpointSet>0</CpuHaltOnBreakpointSet>
     </Jet>
     <ArmDriver>
-        <EnforceMemoryConfiguration>1</EnforceMemoryConfiguration>
         <EnableCache>1</EnableCache>
+        <EnforceMemoryConfiguration>1</EnforceMemoryConfiguration>
     </ArmDriver>
     <StLinkDriver>
         <stlinkserialNo>+</stlinkserialNo>
@@ -69,7 +69,7 @@
         <ITMlogFile>$PROJ_DIR$\ITM.log</ITMlogFile>
     </SWOTraceHWSettings>
     <DebugChecksum>
-        <Checksum>3739340085</Checksum>
+        <Checksum>3224443800</Checksum>
     </DebugChecksum>
     <Disassembly>
         <MixedMode>1</MixedMode>
@@ -78,6 +78,9 @@
     <CallStack>
         <ShowArgs>0</ShowArgs>
     </CallStack>
+    <struct_types>
+        <Fmt0>ip_addr_t-addr	4	0</Fmt0>
+    </struct_types>
     <DriverProfiling>
         <Enabled>0</Enabled>
         <Mode>3</Mode>
