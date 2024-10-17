@@ -37,10 +37,10 @@
     <StLinkDriver>
         <stlinkserialNo>+</stlinkserialNo>
         <stlinkfoundProbes />
-        <LeaveTargetRunning>_ 0</LeaveTargetRunning>
-        <CStepIntDis>_ 0</CStepIntDis>
         <stlinkResetStyle>0</stlinkResetStyle>
         <stlinkResetStrategy>0</stlinkResetStrategy>
+        <LeaveTargetRunning>_ 0</LeaveTargetRunning>
+        <CStepIntDis>_ 0</CStepIntDis>
     </StLinkDriver>
     <Trace1>
         <Enabled>0</Enabled>
@@ -69,7 +69,7 @@
         <ITMlogFile>$PROJ_DIR$\ITM.log</ITMlogFile>
     </SWOTraceHWSettings>
     <DebugChecksum>
-        <Checksum>3739340085</Checksum>
+        <Checksum>2013413883</Checksum>
     </DebugChecksum>
     <Disassembly>
         <MixedMode>1</MixedMode>
@@ -78,6 +78,9 @@
     <CallStack>
         <ShowArgs>0</ShowArgs>
     </CallStack>
+    <struct_types>
+        <Fmt0>ip_addr_t-addr	4	0</Fmt0>
+    </struct_types>
     <DriverProfiling>
         <Enabled>0</Enabled>
         <Mode>3</Mode>
