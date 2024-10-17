@@ -25,14 +25,18 @@
         <MemConfigValue>C:\Program Files\IAR Systems\Embedded Workbench 9.2\arm\config\debugger\ST\STM32F407VE.ddf</MemConfigValue>
     </PlDriver>
     <Jet>
+        <JetConnSerialNo>CMSIS-DAP v1:070000010667ff525251727187013450a5a5a5a597969908</JetConnSerialNo>
+        <JetConnFoundProbes />
+        <PrevWtdReset>Connect during reset</PrevWtdReset>
+        <OnlineReset>Software</OnlineReset>
         <DisableInterrupts>0</DisableInterrupts>
         <LeaveRunning>0</LeaveRunning>
         <MultiCoreRunAll>0</MultiCoreRunAll>
         <CpuHaltOnBreakpointSet>0</CpuHaltOnBreakpointSet>
     </Jet>
     <ArmDriver>
-        <EnforceMemoryConfiguration>1</EnforceMemoryConfiguration>
         <EnableCache>1</EnableCache>
+        <EnforceMemoryConfiguration>1</EnforceMemoryConfiguration>
     </ArmDriver>
     <StLinkDriver>
         <stlinkserialNo>+</stlinkserialNo>
@@ -42,10 +46,6 @@
         <LeaveTargetRunning>_ 0</LeaveTargetRunning>
         <CStepIntDis>_ 0</CStepIntDis>
     </StLinkDriver>
-    <Trace1>
-        <Enabled>0</Enabled>
-        <ShowSource>1</ShowSource>
-    </Trace1>
     <Exceptions>
         <StopOnUncaught>_ 0</StopOnUncaught>
         <StopOnThrow>_ 0</StopOnThrow>
@@ -69,18 +69,15 @@
         <ITMlogFile>$PROJ_DIR$\ITM.log</ITMlogFile>
     </SWOTraceHWSettings>
     <DebugChecksum>
-        <Checksum>2013413883</Checksum>
+        <Checksum>966288937</Checksum>
     </DebugChecksum>
     <Disassembly>
-        <MixedMode>1</MixedMode>
         <InstrCount>0</InstrCount>
+        <MixedMode>1</MixedMode>
     </Disassembly>
     <CallStack>
         <ShowArgs>0</ShowArgs>
     </CallStack>
-    <struct_types>
-        <Fmt0>ip_addr_t-addr	4	0</Fmt0>
-    </struct_types>
     <DriverProfiling>
         <Enabled>0</Enabled>
         <Mode>3</Mode>
@@ -88,20 +85,6 @@
         <Symbiont>0</Symbiont>
         <Exclusions />
     </DriverProfiling>
-    <Trace2>
-        <Enabled>0</Enabled>
-        <ShowSource>0</ShowSource>
-    </Trace2>
-    <SWOTraceWindow>
-        <PcSampling>0</PcSampling>
-        <InterruptLogs>0</InterruptLogs>
-        <ForcedTimeStamps>0</ForcedTimeStamps>
-        <EventCPI>0</EventCPI>
-        <EventEXC>0</EventEXC>
-        <EventFOLD>0</EventFOLD>
-        <EventLSU>0</EventLSU>
-        <EventSLEEP>0</EventSLEEP>
-    </SWOTraceWindow>
     <DataLog>
         <GraphEnabled>0</GraphEnabled>
         <LogEnabled>0</LogEnabled>
@@ -133,6 +116,52 @@
         <ShowTimeSum>1</ShowTimeSum>
         <SumSortOrder>0</SumSortOrder>
     </EventLog>
+    <SWOManager>
+        <SamplingDivider>8192</SamplingDivider>
+        <OverrideClock>0</OverrideClock>
+        <CpuClock>2524845128218271570</CpuClock>
+        <SwoClock>7957695011148355104</SwoClock>
+        <DataLogMode>0</DataLogMode>
+        <ItmPortsEnabled>63</ItmPortsEnabled>
+        <ItmTermIOPorts>1</ItmTermIOPorts>
+        <ItmLogPorts>0</ItmLogPorts>
+        <ItmLogFile>$PROJ_DIR$\ITM.log</ItmLogFile>
+        <PowerForcePC>1</PowerForcePC>
+        <PowerConnectPC>1</PowerConnectPC>
+    </SWOManager>
+    <struct_types>
+        <Fmt0>ip_addr_t-addr	4	0</Fmt0>
+    </struct_types>
+    <Trace1>
+        <Enabled>0</Enabled>
+        <ShowSource>1</ShowSource>
+    </Trace1>
+    <ETMTraceWindow>
+        <PortWidth>4</PortWidth>
+        <PortMode>0</PortMode>
+        <CaptureDataValues>0</CaptureDataValues>
+        <CaptureDataAddresses>0</CaptureDataAddresses>
+        <CaptureDataRange>0</CaptureDataRange>
+        <DataFirst>0</DataFirst>
+        <DataLast>4294967295</DataLast>
+        <StopWhen>0</StopWhen>
+        <StallCPU>0</StallCPU>
+        <NoPCCapture>0</NoPCCapture>
+    </ETMTraceWindow>
+    <Trace2>
+        <Enabled>0</Enabled>
+        <ShowSource>0</ShowSource>
+    </Trace2>
+    <SWOTraceWindow>
+        <ForcedPcSampling>0</ForcedPcSampling>
+        <ForcedInterruptLogs>0</ForcedInterruptLogs>
+        <ForcedItmLogs>0</ForcedItmLogs>
+        <EventCPI>0</EventCPI>
+        <EventEXC>0</EventEXC>
+        <EventFOLD>0</EventFOLD>
+        <EventLSU>0</EventLSU>
+        <EventSLEEP>0</EventSLEEP>
+    </SWOTraceWindow>
     <TermIOLog>
         <LoggingEnabled>_ 0</LoggingEnabled>
         <LogFile>_ ""</LogFile>

@@ -182,6 +182,8 @@ typedef struct
 udp_head_t udp_reqeust={0};
 udp_head_t udp_respone={0};
 uint32_t socket_index=0;
+uint8_t is_request_data = 0;
+uint8_t is_request_block = 0;
 
 #pragma pack()
 /* USER CODE END PV */
@@ -286,24 +288,45 @@ void sdio_write_task(void) {
 
 void sdio_read_task(void)
 {
-    if (sd2udp_buff.buff_state[sd2udp_buff.input_ptr] == WAIT4INPUT && sdio_read_done == 1 && udp_send_state == SENDING_STREAM)
+    if (udp_send_state == SENDING_STREAM)
     {
-        if (read_address < *write_address)
+        if (sd2udp_buff.buff_state[sd2udp_buff.input_ptr] == WAIT4INPUT && sdio_read_done == 1)
         {
-            // 如果剩余数据足够一个buff，直接读一个buff，如果剩余数据不够一个buff，有多少读多少
-            uint32_t read_num = *write_address - read_address;
-            read_num =  read_num> DMA_NUM_BLOCKS_TO_READ? DMA_NUM_BLOCKS_TO_READ : read_num;
-            // 读一个缓冲的数据
-            if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8) == 1 && HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_12) == 1)
+            if (read_address < *write_address)
             {
-                int status = HAL_SD_ReadBlocks_DMA(&hsd, sd2udp_buff.buff[sd2udp_buff.input_ptr], read_address, DMA_NUM_BLOCKS_TO_READ);
-                read_address += read_num;
-                // buff ind加
-                sd2udp_buff.index[sd2udp_buff.input_ptr] = read_num * BLOCK_SIZE;
-                // buff 状态变
-                sd2udp_buff.buff_state[sd2udp_buff.input_ptr] = INPUTING;
-                sdio_read_done = 0;                
-//                printf("读取状态：%d，第%d个block\n", status, read_address);
+                // 如果剩余数据足够一个buff，直接读一个buff，如果剩余数据不够一个buff，有多少读多少
+                uint32_t read_num = *write_address - read_address;
+                read_num =  read_num> DMA_NUM_BLOCKS_TO_READ? DMA_NUM_BLOCKS_TO_READ : read_num;
+                // 读一个缓冲的数据
+                if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8) == 1 && HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_12) == 1)
+                {
+                    int status = HAL_SD_ReadBlocks_DMA(&hsd, sd2udp_buff.buff[sd2udp_buff.input_ptr], read_address, DMA_NUM_BLOCKS_TO_READ);
+                    read_address += read_num;
+                    // buff ind加
+                    sd2udp_buff.index[sd2udp_buff.input_ptr] = read_num * BLOCK_SIZE;
+                    // buff 状态变
+                    sd2udp_buff.buff_state[sd2udp_buff.input_ptr] = INPUTING;
+                    sdio_read_done = 0;                
+                    //                printf("读取状态：%d，第%d个block\n", status, read_address);
+                }
+            }
+        }
+    }
+    else if (udp_send_state == SENDING_BLOCK)
+    {
+        if (sd2udp_buff.buff_state[sd2udp_buff.input_ptr] == WAIT4INPUT && sdio_read_done == 1)
+        {
+            if (is_request_block == 1)
+            {
+                // 读一个缓冲的数据
+                if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8) == 1 && HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_12) == 1)
+                {
+                    int status = HAL_SD_ReadBlocks_DMA(&hsd, sd2udp_buff.buff[sd2udp_buff.input_ptr], read_address, UDP_SEND_SIZE/BLOCK_SIZE);
+                    sd2udp_buff.index[sd2udp_buff.input_ptr] = UDP_SEND_SIZE;
+                    sd2udp_buff.buff_state[sd2udp_buff.input_ptr] = INPUTING;
+                    sdio_read_done = 0;
+                    is_request_block = 0;
+                }
             }
         }
     }
@@ -333,7 +356,6 @@ void check_timeout_and_flush(void) {
 /**************************以下是以太网相关***********************************/
 //ip_addr_t client_addr;  // 保存客户端的IP地址
 //u16_t client_port;      // 保存客户端的端口号
-uint8_t is_request_data = 0;
 void udp_receive_callback(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
     if (p != NULL) {
         if (g_Config.workMode == WRITE) {
@@ -382,18 +404,6 @@ void udp_receive_callback(void *arg, struct udp_pcb *pcb, struct pbuf *p, const 
                 }
             }
         }
-        //        else if (g_Config.workMode == READ) {
-        //            // Handle read commands
-        //            if (p->len >= sizeof(uint32_t)) {
-        //                uint32_t temp_requested_block;
-        //                memcpy(&temp_requested_block, p->payload, sizeof(uint32_t));
-        //                // Convert from network byte order if necessary
-        //                requested_block = lwip_ntohl(temp_requested_block);
-        //
-        //                // Set flag to indicate a new read request has been received
-        //                request_received = 1;
-        //            }
-        //        }
         if (g_Config.workMode == READ) {
             // 处理读取命令
             if (p->len >= sizeof(uint32_t)) {
@@ -410,11 +420,12 @@ void udp_receive_callback(void *arg, struct udp_pcb *pcb, struct pbuf *p, const 
                     udp_send_state = SENDING_STREAM;
                     socket_index = 0;
                 }
-//                else if (udp_reqeust.cmd == REQUEST_BLOCK)
-//                {
-//                    is_request_data = 1;
-//                    request_address = 0;
-//                }
+                else if (udp_reqeust.cmd == REQUEST_BLOCK)
+                {
+                    udp_send_state = SENDING_BLOCK;
+                    read_address = udp_reqeust.start_addr;
+                    is_request_block = 1;
+                }
 //                request_received = 1;
 //                // 保存客户端的地址和端口，以便发送数据
 //                client_addr = *addr;
@@ -425,56 +436,6 @@ void udp_receive_callback(void *arg, struct udp_pcb *pcb, struct pbuf *p, const 
     }
 }
 
-//void udp_receive_callback(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
-//    if (p != NULL) {
-//        uint16_t remaining_data = p->len;  // 剩余数据的长度
-//        uint8_t *data_ptr = (uint8_t *)p->payload;  // 指向接收到的UDP数据
-//        
-//        // 更新最近接收时间
-//        last_tcp_receive_time = HAL_GetTick();
-//        is_udp_rcv = 1;
-//        // 处理当前缓冲区
-//        while (remaining_data > 0) {
-//            // 检查当前缓冲区是否可写
-//            if (udp2sd_buff.buff_state[udp2sd_buff.input_ptr] == WAIT4INPUT) {
-//                uint32_t available_space = BUFFER_SIZE_W - udp2sd_buff.index[udp2sd_buff.input_ptr];  // 当前缓冲区剩余空间
-//                
-//                if (available_space >= remaining_data) {
-//                    // 缓冲区有足够的空间写入整个数据包
-//                    memcpy(udp2sd_buff.buff[udp2sd_buff.input_ptr] + udp2sd_buff.index[udp2sd_buff.input_ptr], data_ptr, remaining_data);
-//                    udp2sd_buff.index[udp2sd_buff.input_ptr] += remaining_data;  // 更新缓冲区写入位置
-//                    remaining_data = 0;  // 数据已经全部写入
-//                } else {
-//                    // 缓冲区没有足够空间，需要拆分数据包
-//                    memcpy(udp2sd_buff.buff[udp2sd_buff.input_ptr] + udp2sd_buff.index[udp2sd_buff.input_ptr], data_ptr, available_space);
-//                    udp2sd_buff.index[udp2sd_buff.input_ptr] += available_space;
-//                    remaining_data -= available_space;  // 减少已处理的数据量
-//                    data_ptr += available_space;  // 移动数据指针
-//                    
-//                    // 标记当前缓冲区为可读
-//                    udp2sd_buff.buff_state[udp2sd_buff.input_ptr] = WAIT4OUTPUT;
-//                    
-//                    // 切换到下一个缓冲区
-//                    udp2sd_buff.input_ptr = (udp2sd_buff.input_ptr + 1) % BUFFER_DEPTH;
-//                    
-//                    // 检查新的缓冲区是否可写
-//                    if (udp2sd_buff.buff_state[udp2sd_buff.input_ptr] != WAIT4INPUT) {
-//                        // 如果下一个缓冲区也不能写，可能需要处理错误或等待处理
-//                        // 这里可以加上丢弃数据或阻塞等待处理逻辑
-//                        break;
-//                    }
-//                    
-//                    // 重置新缓冲区的写入索引
-//                    udp2sd_buff.index[udp2sd_buff.input_ptr] = 0;
-//                }
-//            }
-//        }
-//        
-//        
-//        // 释放 pbuf 结构
-//        pbuf_free(p);
-//    }
-//}
 
 void udp_send_task()
 {
@@ -504,10 +465,10 @@ void udp_send_task()
                     socket_index++;
                     pbuf_free(udp_buf);  // 释放 pbuf
                 }
-                if (udp_buf == NULL || status != ERR_OK)
-                {
-                    printf("udp error:%d\n", status);
-                }
+//                if (udp_buf == NULL || status != ERR_OK)
+//                {
+//                    printf("udp error:%d\n", status);
+//                }
 //                            HAL_UART_Transmit(&huart1, (uint8_t *)&sd2udp_buff.buff[sd2udp_buff.output_ptr]+send_index, send_len, HAL_MAX_DELAY);
                 //                        printf("UDP发送状态：%d，发送第%d个block\n", status, send_len);
                 //                HAL_Delay(2);
@@ -527,68 +488,33 @@ void udp_send_task()
 
         if (read_address >= *write_address&& sd2udp_buff.buff_state[sd2udp_buff.output_ptr] == WAIT4INPUT)
         {
-            udp_send_state = SENDING_BLOCK;
+            udp_send_state = IDLE;
         }
     }
-//    else if (udp_send_state == SENDING_BLOCK && is_request_data == 1)
-//    {
-//        send_len = UDP_SEND_SIZE;
-//        udp_buf = pbuf_alloc(PBUF_TRANSPORT, send_len, PBUF_RAM);
-//        // 读请求的block的数据
-//        if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8) == 1 && HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_12) == 1)
-//        {
-//            int status = HAL_SD_ReadBlocks(&hsd, udp_buf->payload, request_address, send_len/BLOCK_SIZE, 10);
-//        }
-//        // 发送到UDP
-//        if (udp_buf != NULL) {
-//            status = udp_send(udp_send_pcb, udp_buf);  // 发送数据
-//            //                HAL_Delay(1);
-//            pbuf_free(udp_buf);  // 释放 pbuf
-//        }
-//        is_request_data = 0;
-//    }
+    else if (udp_send_state == SENDING_BLOCK)
+    {
+        udp_respone.cmd = RESPONE_BLOCK;
+        if (sd2udp_buff.buff_state[sd2udp_buff.output_ptr] == WAIT4OUTPUT)
+        {
+            udp_respone.start_addr = lwip_ntohl(read_address);
+            udp_respone.end_addr = lwip_ntohl(read_address+UDP_SEND_SIZE/BLOCK_SIZE-1);
+            udp_buf = pbuf_alloc(PBUF_TRANSPORT, UDP_SEND_SIZE+sizeof(udp_respone), PBUF_RAM);
+            if (udp_buf != NULL) {
+                memcpy(udp_buf->payload, (void*)&udp_respone, sizeof(udp_respone));
+                memcpy((uint8_t *)udp_buf->payload+sizeof(udp_respone), sd2udp_buff.buff[sd2udp_buff.output_ptr], UDP_SEND_SIZE);
+                status = udp_send(udp_send_pcb, udp_buf);  // 发送数据
+                pbuf_free(udp_buf);  // 释放 pbuf
+            }
+            sd2udp_buff.index[sd2udp_buff.output_ptr] = 0;
+            sd2udp_buff.buff_state[sd2udp_buff.output_ptr] = WAIT4INPUT;
+            sd2udp_buff.output_ptr = (sd2udp_buff.output_ptr + 1) % BUFFER_DEPTH;
+            if (sd2udp_buff.buff_state[sd2udp_buff.output_ptr] == WAIT4INPUT)
+            {
+                udp_send_state = IDLE;
+            }
+        }
+    }
 }
-//void udp_send_task()
-//{
-//    static uint32_t send_index = 0;
-//    static uint8_t first_pack = 1;
-//    err_t status;
-//    struct pbuf *udp_buf;
-//
-//    if (sd2udp_buff.buff_state[sd2udp_buff.output_ptr] == WAIT4OUTPUT)
-//    {
-//        while (send_index < sd2udp_buff.index[sd2udp_buff.output_ptr])
-//        {
-//            uint32_t send_num = sd2udp_buff.index[sd2udp_buff.output_ptr] - send_index;
-//            send_num = send_num > UDP_SEND_SIZE ? UDP_SEND_SIZE : send_num;
-//
-//            // Create a buffer that includes the block number and data
-//            uint32_t total_size = sizeof(uint32_t) + send_num;
-//            udp_buf = pbuf_alloc(PBUF_TRANSPORT, total_size, PBUF_RAM);
-//            if (udp_buf != NULL) {
-//                // Copy block number into buffer (network byte order)
-//                uint32_t block_number_network = lwip_htonl(requested_block);
-////                memcpy(udp_buf->payload, &block_number_network, sizeof(uint32_t));
-//                // Copy data into buffer
-//                memcpy((uint8_t *)udp_buf->payload + sizeof(uint32_t), sd2udp_buff.buff[sd2udp_buff.output_ptr] + send_index, send_num);
-////                status = udp_send(udp_send_pcb, udp_buf);  // Send data
-//                status = udp_sendto(udp_send_pcb, udp_buf, &client_addr, client_port);                
-//                pbuf_free(udp_buf);  // Free pbuf
-//            }
-//            send_index += send_num;
-//            if (first_pack && send_index >= UDP_SEND_SIZE)
-//            {
-//                HAL_Delay(10);
-//                first_pack = 0;
-//                return;
-//            }
-//        }
-//        send_index = 0;
-//        sd2udp_buff.index[sd2udp_buff.output_ptr] = 0;
-//        sd2udp_buff.buff_state[sd2udp_buff.output_ptr] = WAIT4INPUT;
-//        sd2udp_buff.output_ptr = (sd2udp_buff.output_ptr + 1) % BUFFER_DEPTH;
-//    }
-//}
 
 void udp_receive_init(void) {
     // 你的 UDP 初始化代码

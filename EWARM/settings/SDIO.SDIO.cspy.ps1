@@ -23,9 +23,9 @@
 
 if ($debugfile -eq "")
 {
-& "C:\Program Files\IAR Systems\Embedded Workbench 9.2\common\bin\cspybat" -f "D:\100-Work\000-SmartLink\EthBlackBox\UDP_RCV_SEND\EWARM\settings\SDIO.SDIO.general.xcl" --backend -f "D:\100-Work\000-SmartLink\EthBlackBox\UDP_RCV_SEND\EWARM\settings\SDIO.SDIO.driver.xcl" 
+& "C:\Program Files\IAR Systems\Embedded Workbench 9.2\common\bin\cspybat" -f "D:\2-SmartLink\EthBlackBox\UDP_RCV_SEND_ACK\EWARM\settings\SDIO.SDIO.general.xcl" --backend -f "D:\2-SmartLink\EthBlackBox\UDP_RCV_SEND_ACK\EWARM\settings\SDIO.SDIO.driver.xcl" 
 }
 else
 {
-& "C:\Program Files\IAR Systems\Embedded Workbench 9.2\common\bin\cspybat" -f "D:\100-Work\000-SmartLink\EthBlackBox\UDP_RCV_SEND\EWARM\settings\SDIO.SDIO.general.xcl" --debug_file=$debugfile --backend -f "D:\100-Work\000-SmartLink\EthBlackBox\UDP_RCV_SEND\EWARM\settings\SDIO.SDIO.driver.xcl" 
+& "C:\Program Files\IAR Systems\Embedded Workbench 9.2\common\bin\cspybat" -f "D:\2-SmartLink\EthBlackBox\UDP_RCV_SEND_ACK\EWARM\settings\SDIO.SDIO.general.xcl" --debug_file=$debugfile --backend -f "D:\2-SmartLink\EthBlackBox\UDP_RCV_SEND_ACK\EWARM\settings\SDIO.SDIO.driver.xcl" 
 }
