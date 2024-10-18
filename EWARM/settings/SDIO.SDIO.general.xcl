@@ -1,8 +1,8 @@
 "C:\Program Files\IAR Systems\Embedded Workbench 9.2\arm\bin\armPROC.dll" 
 
-"C:\Program Files\IAR Systems\Embedded Workbench 9.2\arm\bin\armJET.dll" 
+"C:\Program Files\IAR Systems\Embedded Workbench 9.2\arm\bin\armSTLINK.dll" 
 
-"D:\2-SmartLink\EthBlackBox\UDP_RCV_SEND_ACK\EWARM\SDIO\Exe\SDIO.out" 
+"D:\100-Work\000-SmartLink\EthBlackBox\UDP_RCV_SEND_ACK\EWARM\SDIO\Exe\SDIO.out" 
 
 --plugin="C:\Program Files\IAR Systems\Embedded Workbench 9.2\arm\bin\armLibSupportUniversal.dll" 
 

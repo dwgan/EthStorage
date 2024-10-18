@@ -135,7 +135,7 @@ SD2UDP_Buff_t sd2udp_buff = {
     .buff_state = {WAIT4INPUT, WAIT4INPUT}, // 初始化所有缓冲区状态
     .buff = {0}
 };
-
+uint8_t udp_read_block_buff[UDP_SEND_SIZE];
 uint32_t last_tcp_receive_time = 0; // 记录上一次接收到TCP数据的时间戳（毫秒）
 
 uint32_t temp_buff_len = 0;
@@ -233,15 +233,22 @@ void HAL_SD_ErrorCallback(SD_HandleTypeDef *hsd)
 
 void HAL_SD_RxCpltCallback(SD_HandleTypeDef *hsd)
 {
-    if (!sdio_read_done && sd2udp_buff.buff_state[sd2udp_buff.input_ptr] == INPUTING)
+    if (udp_send_state == SENDING_STREAM)
+    {
+        if (!sdio_read_done && sd2udp_buff.buff_state[sd2udp_buff.input_ptr] == INPUTING)
+        {
+            sdio_read_done = 1;
+            // 读指针加
+            //        read_address += sd2udp_buff.index[sd2udp_buff.input_ptr];
+            // buff可读
+            sd2udp_buff.buff_state[sd2udp_buff.input_ptr] = WAIT4OUTPUT;
+            // 切换到下一个buff
+            sd2udp_buff.input_ptr = (sd2udp_buff.input_ptr + 1) % BUFFER_DEPTH;
+        }
+    }
+    if (udp_send_state == SENDING_BLOCK)
     {
         sdio_read_done = 1;
-        // 读指针加
-        //        read_address += sd2udp_buff.index[sd2udp_buff.input_ptr];
-        // buff可读
-        sd2udp_buff.buff_state[sd2udp_buff.input_ptr] = WAIT4OUTPUT;
-        // 切换到下一个buff
-        sd2udp_buff.input_ptr = (sd2udp_buff.input_ptr + 1) % BUFFER_DEPTH;
     }
 }
 
@@ -295,19 +302,14 @@ void sdio_read_task(void)
     }
     else if (udp_send_state == SENDING_BLOCK)
     {
-        if (sd2udp_buff.buff_state[sd2udp_buff.input_ptr] == WAIT4INPUT && sdio_read_done == 1)
+        if (is_request_block == 1 && sdio_read_done == 1)
         {
-            if (is_request_block == 1)
+            // 读一个缓冲的数据
+            if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8) == 1 && HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_12) == 1)
             {
-                // 读一个缓冲的数据
-                if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8) == 1 && HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_12) == 1)
-                {
-                    int status = HAL_SD_ReadBlocks_DMA(&hsd, sd2udp_buff.buff[sd2udp_buff.input_ptr], read_address, UDP_SEND_SIZE/BLOCK_SIZE);
-                    sd2udp_buff.index[sd2udp_buff.input_ptr] = UDP_SEND_SIZE;
-                    sd2udp_buff.buff_state[sd2udp_buff.input_ptr] = INPUTING;
-                    sdio_read_done = 0;
-                    is_request_block = 0;
-                }
+                int status = HAL_SD_ReadBlocks_DMA(&hsd, udp_read_block_buff, read_address, UDP_SEND_SIZE/BLOCK_SIZE);
+                sdio_read_done = 0;
+                is_request_block = 0;
             }
         }
     }
@@ -478,25 +480,19 @@ void udp_send_task()
     else if (udp_send_state == SENDING_BLOCK)
     {
         udp_respone.cmd = RESPONE_BLOCK;
-        if (sd2udp_buff.buff_state[sd2udp_buff.output_ptr] == WAIT4OUTPUT)
+        if (sdio_read_done == 1)
         {
             udp_respone.start_addr = lwip_ntohl(read_address);
             udp_respone.end_addr = lwip_ntohl(read_address+UDP_SEND_SIZE/BLOCK_SIZE-1);
             udp_buf = pbuf_alloc(PBUF_TRANSPORT, UDP_SEND_SIZE+sizeof(udp_respone), PBUF_RAM);
             if (udp_buf != NULL) {
                 memcpy(udp_buf->payload, (void*)&udp_respone, sizeof(udp_respone));
-                memcpy((uint8_t *)udp_buf->payload+sizeof(udp_respone), sd2udp_buff.buff[sd2udp_buff.output_ptr], UDP_SEND_SIZE);
+                memcpy((uint8_t *)udp_buf->payload+sizeof(udp_respone), udp_read_block_buff, UDP_SEND_SIZE);
                 status = udp_send(udp_send_pcb, udp_buf);  // 发送数据
                 pbuf_free(udp_buf);  // 释放 pbuf
-                HAL_UART_Transmit(&huart1, sd2udp_buff.buff[sd2udp_buff.output_ptr], UDP_SEND_SIZE, HAL_MAX_DELAY);
+                HAL_UART_Transmit(&huart1, udp_read_block_buff, UDP_SEND_SIZE, HAL_MAX_DELAY);
                 udp_block_send_done = 1;
-	            sd2udp_buff.index[sd2udp_buff.output_ptr] = 0;
-	            sd2udp_buff.buff_state[sd2udp_buff.output_ptr] = WAIT4INPUT;
-	            sd2udp_buff.output_ptr = (sd2udp_buff.output_ptr + 1) % BUFFER_DEPTH;
-	            if (sd2udp_buff.buff_state[sd2udp_buff.output_ptr] == WAIT4INPUT)
-	            {
-	                udp_send_state = IDLE;
-	            }
+                udp_send_state = IDLE;
             }
         }
     }
