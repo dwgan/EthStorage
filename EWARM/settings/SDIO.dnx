@@ -25,10 +25,10 @@
         <MemConfigValue>C:\Program Files\IAR Systems\Embedded Workbench 9.2\arm\config\debugger\ST\STM32F407VE.ddf</MemConfigValue>
     </PlDriver>
     <Jet>
-        <JetConnSerialNo>CMSIS-DAP v1:070000010667ff525251727187013450a5a5a5a597969908</JetConnSerialNo>
-        <JetConnFoundProbes />
         <PrevWtdReset>Connect during reset</PrevWtdReset>
         <OnlineReset>Software</OnlineReset>
+        <JetConnSerialNo>CMSIS-DAP v1:070000010667ff525251727187013450a5a5a5a597969908</JetConnSerialNo>
+        <JetConnFoundProbes />
         <DisableInterrupts>0</DisableInterrupts>
         <LeaveRunning>0</LeaveRunning>
         <MultiCoreRunAll>0</MultiCoreRunAll>
@@ -41,10 +41,10 @@
     <StLinkDriver>
         <stlinkserialNo>+</stlinkserialNo>
         <stlinkfoundProbes />
-        <LeaveTargetRunning>_ 0</LeaveTargetRunning>
-        <CStepIntDis>_ 0</CStepIntDis>
         <stlinkResetStyle>0</stlinkResetStyle>
         <stlinkResetStrategy>0</stlinkResetStrategy>
+        <LeaveTargetRunning>_ 0</LeaveTargetRunning>
+        <CStepIntDis>_ 0</CStepIntDis>
     </StLinkDriver>
     <Exceptions>
         <StopOnUncaught>_ 0</StopOnUncaught>
@@ -81,8 +81,8 @@
     <SWOManager>
         <SamplingDivider>8192</SamplingDivider>
         <OverrideClock>0</OverrideClock>
-        <CpuClock>2524845128218271570</CpuClock>
-        <SwoClock>7957695011148355104</SwoClock>
+        <CpuClock>4636737291354636288</CpuClock>
+        <SwoClock>4637440978796412928</SwoClock>
         <DataLogMode>0</DataLogMode>
         <ItmPortsEnabled>63</ItmPortsEnabled>
         <ItmTermIOPorts>1</ItmTermIOPorts>
@@ -174,9 +174,7 @@
         <mode>0</mode>
     </DisassembleMode>
     <Breakpoints2>
-        <Bp0>_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\Core\Src\main.c}.409.25" 0 0 1 "" 0 "" 0</Bp0>
-        <Bp1>_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\Core\Src\main.c}.249.5" 0 0 1 "" 0 "" 0</Bp1>
-        <Count>2</Count>
+        <Count>0</Count>
     </Breakpoints2>
     <Aliases>
         <Count>0</Count>
